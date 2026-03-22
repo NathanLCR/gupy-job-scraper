@@ -1,8 +1,10 @@
+import csv
 from datetime import UTC, datetime
+from io import StringIO
 from threading import Lock, Thread
 
 from flasgger import Swagger
-from flask import Flask, jsonify, redirect, request
+from flask import Flask, Response, jsonify, redirect, request
 
 from sqlalchemy import desc, select
 
@@ -93,6 +95,73 @@ def _serialize_error(row: ErrorLog) -> dict:
 
 def _serialize_search_term(row: SearchTerm) -> dict:
     return {"id": row.id, "term": row.term, "is_active": row.is_active}
+
+
+def _job_post_to_csv_row(row: JobsPost) -> list:
+    return [
+        row.id,
+        row.company_id,
+        row.name,
+        row.description or "",
+        row.career_page_id,
+        row.career_page_name or "",
+        row.career_page_logo or "",
+        row.career_page_url or "",
+        row.job_type or "",
+        row.published_date.isoformat() if row.published_date else "",
+        row.application_deadline.isoformat() if row.application_deadline else "",
+        row.is_remote_work if row.is_remote_work is not None else "",
+        row.city or "",
+        row.state or "",
+        row.country or "",
+        row.job_url or "",
+        row.workplace_type or "",
+        row.disabilities if row.disabilities is not None else "",
+        row.skills or "",
+        row.badges or "",
+    ]
+
+
+JOB_POSTS_CSV_HEADERS = [
+    "id",
+    "company_id",
+    "name",
+    "description",
+    "career_page_id",
+    "career_page_name",
+    "career_page_logo",
+    "career_page_url",
+    "job_type",
+    "published_date",
+    "application_deadline",
+    "is_remote_work",
+    "city",
+    "state",
+    "country",
+    "job_url",
+    "workplace_type",
+    "disabilities",
+    "skills",
+    "badges",
+]
+
+
+def build_job_posts_csv() -> tuple[bytes, str]:
+    """Return UTF-8 CSV bytes (with BOM for Excel) and suggested filename."""
+    db = SessionLocal()
+    try:
+        rows = db.scalars(select(JobsPost).order_by(desc(JobsPost.published_date))).all()
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(JOB_POSTS_CSV_HEADERS)
+        for row in rows:
+            writer.writerow(_job_post_to_csv_row(row))
+        # utf-8-sig adds BOM so Excel opens UTF-8 correctly
+        data = buffer.getvalue().encode("utf-8-sig")
+        filename = f"job_posts_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
+        return data, filename
+    finally:
+        db.close()
 
 
 def _run_scraper(mode: str) -> None:
@@ -293,6 +362,32 @@ def get_job_posts() -> tuple:
         return jsonify([_serialize_job_post(row) for row in rows]), 200
     finally:
         db.close()
+
+
+@app.get("/job-posts/export")
+def export_job_posts_csv() -> tuple:
+    """Download all job posts as a CSV file (Excel-friendly UTF-8).
+    ---
+    tags:
+      - Job posts
+    produces:
+      - text/csv
+    responses:
+      200:
+        description: CSV attachment with every row from jobs_posts
+    """
+    data, filename = build_job_posts_csv()
+    return (
+        Response(
+            data,
+            mimetype="text/csv; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store",
+            },
+        ),
+        200,
+    )
 
 
 @app.get("/search-terms")
