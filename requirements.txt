@@ -1,6 +1,6 @@
 requests
 pandas
 numpy
-sqlalchemy
-alembic
 flask
+sqlalchemy>=2.0
+alembic>=1.10
