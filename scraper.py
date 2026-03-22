@@ -10,7 +10,6 @@ from sqlalchemy import select
 from database import SessionLocal, init_db
 from entities import ErrorLog, JobsPost, SearchTerm
 
-
 BASE_URL = "https://employability-portal.gupy.io/api/v1/jobs"
 HEADERS = {
     "User-Agent": (
@@ -20,15 +19,6 @@ HEADERS = {
     ),
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8",
 }
-DEFAULT_SEARCH_TERMS = [
-    "Desenvolvedor",
-    "Engenheiro de software",
-    "Developer",
-    "software engineer",
-    "data science",
-    "Cientista de dados",
-    "Tech lead",
-]
 
 
 def parse_datetime(value: str | None) -> datetime | None:
@@ -36,7 +26,6 @@ def parse_datetime(value: str | None) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        # Normalize to UTC-naive to keep SQLite comparisons consistent.
         if parsed.tzinfo is not None:
             return parsed.astimezone(UTC).replace(tzinfo=None)
         return parsed
@@ -67,7 +56,9 @@ def log_error(
         term=term,
         page=page,
         request_limit=request_limit,
-        payload=json.dumps(payload, ensure_ascii=False) if payload is not None else None,
+        payload=json.dumps(payload, ensure_ascii=False)
+        if payload is not None
+        else None,
     )
     db.add(entry)
     db.commit()
@@ -87,17 +78,18 @@ def fetch_gupy_jobs_post(db, term: str, page: int, limit: int) -> dict[str, Any]
         return None
 
     if "data" not in payload or not isinstance(payload.get("data"), list):
-        log_error(db, "Malformed API payload: missing data list", term, page, limit, payload)
+        log_error(
+            db, "Malformed API payload: missing data list", term, page, limit, payload
+        )
         return None
 
     return payload
 
 
 def get_active_search_terms(db) -> list[str]:
-    terms = db.scalars(select(SearchTerm.term).where(SearchTerm.is_active.is_(True))).all()
-    if terms:
-        return terms
-    return DEFAULT_SEARCH_TERMS
+    return db.scalars(
+        select(SearchTerm.term).where(SearchTerm.is_active.is_(True))
+    ).all()
 
 
 def save_job_post(db, row: dict[str, Any]) -> bool:
@@ -133,7 +125,6 @@ def save_job_post(db, row: dict[str, Any]) -> bool:
 
 
 def populate_database(limit: int = 20) -> int:
-    """Initial load: fetch all pages and insert missing jobs."""
     init_db()
     db = SessionLocal()
     inserted = 0
@@ -156,7 +147,9 @@ def populate_database(limit: int = 20) -> int:
                 for row in rows:
                     row_id = row.get("id")
                     if row_id is None:
-                        log_error(db, "Job without id in payload", term, page, limit, row)
+                        log_error(
+                            db, "Job without id in payload", term, page, limit, row
+                        )
                         continue
                     if row_id in existing_ids:
                         continue
@@ -200,7 +193,9 @@ def scrape() -> None:
                 for row in rows:
                     row_id = row.get("id")
                     if row_id is None:
-                        log_error(db, "Job without id in payload", term, page, limit, row)
+                        log_error(
+                            db, "Job without id in payload", term, page, limit, row
+                        )
                         continue
 
                     published_dt = parse_datetime(row.get("publishedDate"))

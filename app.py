@@ -1,15 +1,19 @@
 from datetime import UTC, datetime
 from threading import Lock, Thread
 
-from flask import Flask, jsonify, request
+from flasgger import Swagger
+from flask import Flask, jsonify, redirect, request
+
 from sqlalchemy import desc, select
 
 from database import SessionLocal, init_db
 from entities import ErrorLog, JobsPost, SearchTerm
 from scraper import populate_database, scrape
+from swagger_config import SWAGGER_CONFIG, SWAGGER_TEMPLATE
 
 
 app = Flask(__name__)
+Swagger(app, template=SWAGGER_TEMPLATE, config=SWAGGER_CONFIG)
 
 _scrape_lock = Lock()
 _scrape_status = {
@@ -113,17 +117,84 @@ def _run_scraper(mode: str) -> None:
 
 @app.get("/health")
 def health() -> tuple:
+    """Service health check.
+    ---
+    tags:
+      - Health
+    responses:
+      200:
+        description: OK
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: ok
+    """
     return jsonify({"status": "ok"}), 200
+
+
+@app.get("/docs")
+def docs_redirect() -> tuple:
+    """Redirect to Swagger UI.
+    ---
+    tags:
+      - Health
+    responses:
+      302:
+        description: Redirects to /apidocs/
+    """
+    return redirect("/apidocs/", code=302)
 
 
 @app.post("/database/init")
 def initialize_database() -> tuple:
+    """Create all SQLAlchemy tables if they do not exist.
+    ---
+    tags:
+      - Database
+    responses:
+      200:
+        description: Tables created or already present
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+              example: Database initialized
+    """
     init_db()
     return jsonify({"message": "Database initialized"}), 200
 
 
 @app.post("/scrape/start")
 def start_scrape() -> tuple:
+    """Start background scrape (incremental or full populate).
+    ---
+    tags:
+      - Scraper
+    parameters:
+      - name: mode
+        in: query
+        type: string
+        enum: [incremental, populate]
+        default: incremental
+        description: incremental = new jobs only; populate = full historical load
+    responses:
+      202:
+        description: Scrape job accepted
+        schema:
+          type: object
+          properties:
+            message:
+              type: string
+            mode:
+              type: string
+      400:
+        description: Invalid mode
+      409:
+        description: A scrape is already running
+    """
     mode = request.args.get("mode", "incremental").strip().lower()
     if mode not in {"incremental", "populate"}:
         return jsonify({"error": "Invalid mode. Use 'incremental' or 'populate'."}), 400
@@ -138,11 +209,50 @@ def start_scrape() -> tuple:
 
 @app.get("/scrape/status")
 def scrape_status() -> tuple:
+    """Current scrape job status (running, timestamps, error if any).
+    ---
+    tags:
+      - Scraper
+    responses:
+      200:
+        description: Status payload
+        schema:
+          type: object
+          properties:
+            running:
+              type: boolean
+            mode:
+              type: string
+              nullable: true
+            started_at:
+              type: string
+              nullable: true
+            finished_at:
+              type: string
+              nullable: true
+            error:
+              type: string
+              nullable: true
+    """
     return jsonify(_scrape_status), 200
 
 
 @app.get("/errors")
 def get_errors() -> tuple:
+    """List recent error log entries (newest first).
+    ---
+    tags:
+      - Errors
+    parameters:
+      - name: limit
+        in: query
+        type: integer
+        default: 100
+        description: Max rows (1–500)
+    responses:
+      200:
+        description: Array of error log objects
+    """
     limit = _get_pagination_limit()
     db = SessionLocal()
     try:
@@ -154,6 +264,25 @@ def get_errors() -> tuple:
 
 @app.get("/job-posts")
 def get_job_posts() -> tuple:
+    """List job posts (newest by published_date first).
+    ---
+    tags:
+      - Job posts
+    parameters:
+      - name: limit
+        in: query
+        type: integer
+        default: 100
+        description: Page size (1–500)
+      - name: offset
+        in: query
+        type: integer
+        default: 0
+        description: Rows to skip
+    responses:
+      200:
+        description: Array of job post objects
+    """
     limit = _get_pagination_limit()
     offset = _get_pagination_offset()
     db = SessionLocal()
@@ -168,6 +297,14 @@ def get_job_posts() -> tuple:
 
 @app.get("/search-terms")
 def get_search_terms() -> tuple:
+    """List all search terms used by the scraper.
+    ---
+    tags:
+      - Search terms
+    responses:
+      200:
+        description: Array of search term objects
+    """
     db = SessionLocal()
     try:
         rows = db.scalars(select(SearchTerm).order_by(SearchTerm.id)).all()
@@ -178,6 +315,32 @@ def get_search_terms() -> tuple:
 
 @app.post("/search-terms")
 def create_search_term() -> tuple:
+    """Create a search term.
+    ---
+    tags:
+      - Search terms
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - term
+          properties:
+            term:
+              type: string
+            is_active:
+              type: boolean
+              default: true
+    responses:
+      201:
+        description: Created
+      400:
+        description: Validation error
+      409:
+        description: Duplicate term
+    """
     payload = request.get_json(silent=True) or {}
     term = (payload.get("term") or "").strip()
     is_active = _parse_bool(payload.get("is_active"), default=True)
@@ -201,6 +364,32 @@ def create_search_term() -> tuple:
 
 @app.put("/search-terms/<int:term_id>")
 def update_search_term(term_id: int) -> tuple:
+    """Update a search term by id.
+    ---
+    tags:
+      - Search terms
+    parameters:
+      - name: term_id
+        in: path
+        type: integer
+        required: true
+      - name: body
+        in: body
+        schema:
+          type: object
+          properties:
+            term:
+              type: string
+            is_active:
+              type: boolean
+    responses:
+      200:
+        description: Updated
+      404:
+        description: Not found
+      409:
+        description: Duplicate term
+    """
     payload = request.get_json(silent=True) or {}
     db = SessionLocal()
     try:
@@ -231,6 +420,21 @@ def update_search_term(term_id: int) -> tuple:
 
 @app.delete("/search-terms/<int:term_id>")
 def delete_search_term(term_id: int) -> tuple:
+    """Delete a search term by id.
+    ---
+    tags:
+      - Search terms
+    parameters:
+      - name: term_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Deleted
+      404:
+        description: Not found
+    """
     db = SessionLocal()
     try:
         row = db.get(SearchTerm, term_id)

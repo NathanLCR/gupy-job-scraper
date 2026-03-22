@@ -1,0 +1,38 @@
+"""Flasgger / Swagger UI configuration."""
+
+SWAGGER_TEMPLATE = {
+    "swagger": "2.0",
+    "info": {
+        "title": "Gupy Jobs API",
+        "description": (
+            "REST API for initializing the database, running the Gupy job scraper, "
+            "managing search terms, and listing job posts and error logs."
+        ),
+        "version": "1.0.0",
+    },
+    "basePath": "/",
+    "schemes": ["http", "https"],
+    "tags": [
+        {"name": "Health", "description": "Service health"},
+        {"name": "Database", "description": "Database initialization"},
+        {"name": "Scraper", "description": "Scrape jobs from Gupy"},
+        {"name": "Errors", "description": "Fetch error logs"},
+        {"name": "Job posts", "description": "List scraped job posts"},
+        {"name": "Search terms", "description": "CRUD for scraper search terms"},
+    ],
+}
+
+SWAGGER_CONFIG = {
+    "headers": [],
+    "specs": [
+        {
+            "endpoint": "apispec",
+            "route": "/apispec.json",
+            "rule_filter": lambda rule: True,
+            "model_filter": lambda tag: True,
+        }
+    ],
+    "static_url_path": "/flasgger_static",
+    "swagger_ui": True,
+    "specs_route": "/apidocs/",
+}
