@@ -1,13 +1,3 @@
-"""
-Gupy job scraper: fetch jobs per active search terms, persist to JobsPost, log errors to ErrorLog.
-
-Error logs always use a separate DB session so logging never commits pending job rows.
-
-Incremental mode: for each term, paginate until a full page adds no new job IDs (all rows were
-already in DB). Assumes API returns roughly newest-first. Stops on empty page. With an empty
-jobs table, keeps paging until the API returns no rows (same as populate for that term).
-"""
-
 from __future__ import annotations
 
 import json
@@ -20,8 +10,10 @@ import requests
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from services.error_service import log_error
+
 from database import SessionLocal, init_db
-from entities import ErrorLog, JobsPost, SearchTerm
+from entities import JobsPost, SearchTerm
 
 BASE_URL = "https://employability-portal.gupy.io/api/v1/jobs"
 HEADERS = {
@@ -66,37 +58,6 @@ def parse_date(value: str | None) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
-
-
-def log_error(
-    message: str,
-    term: str | None = None,
-    page: int | None = None,
-    request_limit: int | None = None,
-    payload: Any = None,
-    *,
-    source: str = "fetch_gupy_jobs_post",
-) -> None:
-    log_db = SessionLocal()
-    try:
-        log_db.add(
-            ErrorLog(
-                source=source,
-                message=message,
-                term=term,
-                page=page,
-                request_limit=request_limit,
-                payload=json.dumps(payload, ensure_ascii=False)
-                if payload is not None
-                else None,
-            )
-        )
-        log_db.commit()
-    except Exception as exc:  # noqa: BLE001
-        log_db.rollback()
-        print(f"[log_error failed] {exc}: {message}")
-    finally:
-        log_db.close()
 
 
 def get_active_search_terms(db) -> list[str]:

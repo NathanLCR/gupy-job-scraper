@@ -1,15 +1,7 @@
-"""Add search terms table.
-
-Revision ID: 0003_add_search_terms_table
-Revises: 0002_add_error_logs_table
-Create Date: 2026-03-21 00:00:00.000000
-"""
-
 from alembic import op
 import sqlalchemy as sa
 
 
-# revision identifiers, used by Alembic.
 revision = "0003_add_search_terms_table"
 down_revision = "0002_add_error_logs_table"
 branch_labels = None
