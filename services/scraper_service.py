@@ -269,6 +269,7 @@ def scrape() -> None:
         for term in search_terms:
             page = 1
             page_limit = 20
+            print(f"Scraping for term '{term}'...")
 
             while True:
                 response = fetch_gupy_jobs_post(term, page, page_limit)
