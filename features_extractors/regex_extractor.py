@@ -399,7 +399,11 @@ def extract(raw: str) -> dict:
 
     # Deduplicate by (min, max)
     seen = set()
-    years_experience = e["min"] or e["max"] or none
+    if exp_list:
+        e = exp_list[0]
+        years_experience = e["min"] or e["max"] or None
+    else:
+        years_experience = None
 
     # ── Salary ────────────────────────────────────────────────────────────
     salary = RE_SALARY.findall(text) or None
