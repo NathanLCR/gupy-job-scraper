@@ -7,7 +7,6 @@ venv/
 env/
 ENV/
 .env
-
 *.sqlite3
 *.db
 jobs.db
