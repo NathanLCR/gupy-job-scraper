@@ -98,5 +98,3 @@ As per the assignment requirements for academic propriety, the following librari
 * **[Pandas & NumPy](https://pandas.pydata.org/)**: Employed for structural data handling and CSV exports (BSD-3-Clause).
 * **[Requests](https://requests.readthedocs.io/)**: Used strictly for the Data Acquisition (scraping) phase of the pipeline interacting with target endpoints (Apache 2.0).
 * Regex expressions and web-scraping logic algorithms constitute original logic developed by the author.
-
-*Note: In accordance with submission guidelines, the executable code along with inline text-cell documentation is provided as an Editor-shared Colab Notebook tracking progressive development.*
