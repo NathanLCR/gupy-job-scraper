@@ -5,7 +5,7 @@ from io import StringIO
 from threading import Lock, Thread
 
 from flasgger import Swagger
-from flask import Flask, Response, jsonify, redirect, request
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 
 from sqlalchemy import desc, select
 
@@ -73,6 +73,19 @@ def _run_scraper(mode: str) -> None:
     finally:
         _scrape_status["running"] = False
         _scrape_status["finished_at"] = datetime.now(UTC).isoformat()
+
+
+@app.route("/")
+def index():
+    return redirect("/dashboard")
+
+@app.route("/dashboard")
+def dashboard():
+    return send_from_directory('frontend', 'index.html')
+
+@app.route("/frontend/<path:path>")
+def frontend_static(path):
+    return send_from_directory('frontend', path)
 
 
 @app.get("/health")

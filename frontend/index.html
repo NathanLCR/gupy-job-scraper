@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gupy Scraper Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Boxicons -->
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/frontend/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="logo">
+                <i class='bx bxl-python'></i>
+                <span>Job Scraper</span>
+            </div>
+            <ul class="nav-links">
+                <li class="nav-item active" data-target="dashboard-view">
+                    <i class='bx bx-grid-alt'></i> Dashboard
+                </li>
+                <li class="nav-item" data-target="jobs-view">
+                    <i class='bx bx-briefcase-alt-2'></i> Job Posts
+                </li>
+                <li class="nav-item" data-target="terms-view">
+                    <i class='bx bx-search-alt'></i> Search Terms
+                </li>
+                <li class="nav-item" data-target="errors-view">
+                    <i class='bx bx-bug'></i> System Logs
+                </li>
+                <div class="nav-divider"></div>
+                <div class="nav-subtitle">ACTIONS</div>
+                <li>
+                    <button class="nav-btn primary" id="btn-scrape-incremental">
+                        <i class='bx bx-refresh'></i> Fetch New Jobs
+                    </button>
+                </li>
+                <li>
+                    <button class="nav-btn secondary" id="btn-extract">
+                        <i class='bx bx-layer'></i> Extract Features
+                    </button>
+                </li>
+                <li>
+                    <a href="/docs" target="_blank" class="nav-btn outline">
+                        <i class='bx bx-code-alt'></i> API Docs
+                    </a>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-header">
+                <div class="header-title">
+                    <h1 id="page-title">Dashboard Overview</h1>
+                    <p class="subtitle">Monitor and manage your scraping operations.</p>
+                </div>
+                <div class="scraper-status-pill" id="global-status-pill">
+                    <div class="status-indicator"></div>
+                    <span id="global-status-text">Idle</span>
+                </div>
+            </header>
+
+            <div class="views-container">
+                <!-- Dashboard View -->
+                <section id="dashboard-view" class="view active">
+                    <div class="metrics-grid">
+                        <div class="metric-card glass">
+                            <div class="metric-icon"><i class='bx bx-briefcase'></i></div>
+                            <div class="metric-info">
+                                <h3>Total Jobs</h3>
+                                <h2 id="metric-jobs-count">--</h2>
+                            </div>
+                        </div>
+                        <div class="metric-card glass">
+                            <div class="metric-icon"><i class='bx bx-search'></i></div>
+                            <div class="metric-info">
+                                <h3>Search Terms</h3>
+                                <h2 id="metric-terms-count">--</h2>
+                            </div>
+                        </div>
+                        <div class="metric-card glass">
+                            <div class="metric-icon error"><i class='bx bx-error-circle'></i></div>
+                            <div class="metric-info">
+                                <h3>System Errors</h3>
+                                <h2 id="metric-errors-count">--</h2>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panels-grid">
+                        <div class="panel glass scraper-control">
+                            <div class="panel-header">
+                                <h2><i class='bx bx-server'></i> Scraper Engine</h2>
+                            </div>
+                            <div class="panel-body">
+                                <div class="status-box">
+                                    <div class="status-row">
+                                        <span>Status:</span>
+                                        <span id="sys-status" class="badge neutral">Connecting...</span>
+                                    </div>
+                                    <div class="status-row">
+                                        <span>Last Run Mode:</span>
+                                        <span id="sys-mode">--</span>
+                                    </div>
+                                    <div class="status-row">
+                                        <span>Started At:</span>
+                                        <span id="sys-started">--</span>
+                                    </div>
+                                    <div class="status-row">
+                                        <span>Duration / Finished:</span>
+                                        <span id="sys-finished">--</span>
+                                    </div>
+                                </div>
+                                <div class="action-buttons mt-4">
+                                    <button class="btn primary full-width" id="dash-btn-scrape">Run Incremental Scrape</button>
+                                    <button class="btn warning full-width mt-2" id="dash-btn-populate">Run Full Populate</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="panel glass chart-panel">
+                            <div class="panel-header">
+                                <h2><i class='bx bx-bar-chart-alt-2'></i> Recent Error Frequency</h2>
+                            </div>
+                            <div class="panel-body">
+                                <canvas id="errorChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Jobs View -->
+                <section id="jobs-view" class="view">
+                    <div class="panel glass full-height">
+                        <div class="panel-header flex-between">
+                            <h2><i class='bx bx-briefcase-alt-2'></i> Job Postings Database</h2>
+                            <button class="btn outline small" id="btn-export-csv"><i class='bx bx-export'></i> Export CSV</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table" id="jobs-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Title</th>
+                                        <th>Company</th>
+                                        <th>City / State</th>
+                                        <th>Workplace</th>
+                                        <th>Published</th>
+                                        <th>Platform</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Populated by JS -->
+                                    <tr><td colspan="7" class="text-center text-muted">Loading jobs...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Search Terms View -->
+                <section id="terms-view" class="view">
+                    <div class="panel glass">
+                        <div class="panel-header flex-between">
+                            <h2><i class='bx bx-search-alt'></i> Manage Search Terms</h2>
+                            <button class="btn primary small" id="btn-add-term"><i class='bx bx-plus'></i> Add Term</button>
+                        </div>
+                        
+                        <!-- Add Term Form (Hidden by default) -->
+                        <div id="add-term-form" class="form-container" style="display: none;">
+                            <input type="text" id="new-term-input" placeholder="e.g. Data Engineer" class="text-input">
+                            <button class="btn solid-green" id="btn-submit-term">Save</button>
+                            <button class="btn outline" id="btn-cancel-term">Cancel</button>
+                        </div>
+
+                        <div class="table-container mt-4">
+                            <table class="data-table" id="terms-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Search Term</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Populated by JS -->
+                                    <tr><td colspan="4" class="text-center text-muted">Loading terms...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Errors View -->
+                <section id="errors-view" class="view">
+                    <div class="panel glass full-height">
+                        <div class="panel-header flex-between">
+                            <h2><i class='bx bx-bug'></i> System Logs & Errors</h2>
+                            <button class="btn outline small" id="btn-refresh-errors"><i class='bx bx-refresh'></i> Refresh</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table" id="errors-table">
+                                <thead>
+                                    <tr>
+                                        <th width="150">Timestamp (UTC)</th>
+                                        <th width="120">Context</th>
+                                        <th>Error Message</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Populated by JS -->
+                                    <tr><td colspan="3" class="text-center text-muted">Loading errors...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+    
+    <!-- Notification Toast -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="/frontend/script.js"></script>
+</body>
+</html>
