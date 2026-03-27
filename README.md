@@ -1,1 +1,102 @@
-# gupy-job-scraper
+# Gupy Job Scraper & Extractor (DBS CA2)
+
+> **Academic Project Notice**: This project was developed as a Continuous Assessment (CA2) assignment for the **MSc in Artificial Intelligence** program at **Dublin Business School (DBS)**. 
+> 
+> It serves as a comprehensive Data Acquisition and Preprocessing Pipeline, demonstrating skills in data acquisition (web scraping/API interaction), feature extraction (Regex data parsing), transformations, and loading into a relational PostgreSQL database (ETL).
+
+A Python-based backend application designed to extract, parse, and structure job postings from the Brazilian recruitment platform **Gupy**. It provides a Flask REST API to manage scraping tasks, trigger regex-based feature extraction (like hard skills, soft skills, salaries), and store everything in a structured **PostgreSQL** database using SQLAlchemy.
+
+## 🚀 Features
+
+* **Background Scraper**: Scrapes Gupy jobs iteratively based on configured search terms without blocking the server.
+* **Smart Feature Extractor**: Automatically parses raw HTML job descriptions using Regex to categorize:
+  * Hard Skills & Tech Stacks
+  * Soft Skills
+  * Nice-to-Have Skills
+  * Contract Type (CLT, PJ, etc.)
+  * Salary Information
+  * City & State
+* **Relational Database**: Leverages SQLAlchemy to normalize extracted data into structured entities (`Company`, `Job`, `HardSkill`, `SoftSkill`, etc.).
+* **CSV Export**: Instantly download your full dataset into Excel-friendly format.
+* **REST/Swagger API**: Fully documented API endpoints for managing the entire pipeline.
+
+## 🛠️ Tech Stack
+
+* **Language**: Python 3.12+
+* **Framework**: Flask
+* **Database**: PostgreSQL (Azure Flexible Server supported)
+* **ORM & Migrations**: SQLAlchemy & Alembic
+* **Documentation**: Flasgger (OpenAPI/Swagger)
+* **Data Handling**: Pandas & Numpy
+
+## ⚙️ Setup & Installation
+
+**1. Create your Virtual Environment**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+**2. Install Dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+**3. Configure Environment Variables**
+Create a `.env` file in the root directory (or use your Azure VM configuration) with your PostgreSQL connection details:
+```env
+DB_PORT=5432
+DB_USER=your_postgres_user
+DB_PASSWORD=your_password
+DB_NAME=postgres
+DB_HOST=your_database_host
+```
+
+**4. Initialize the Database**
+You must create the relational tables before your first extraction:
+Run the application and call the `POST /database/init` endpoint OR run via terminal:
+```bash
+python3 -c "from database import init_db; init_db()"
+```
+
+**5. Start the Application**
+```bash
+python3 app.py
+```
+*The server will start on `http://127.0.0.1:8080`.*
+
+## 📖 API Documentation
+
+Once the Flask application is running, you can access the full interactive Swagger documentation at:
+**[http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs)**
+
+### Key Endpoints
+
+* `GET /docs` - Access the Swagger UI.
+* `POST /database/init` - Creates missing tables in PostgreSQL.
+* `POST /scrape/start?mode=incremental` - Starts a background scraping task.
+* `POST /extract` - Runs the regex extractor over the raw job posts and maps them to relational entities.
+* `GET /job-posts/export` - Downloads all currently mapped job posts in a `.csv` file.
+* `GET/POST/PUT/DELETE /search-terms` - Manage the terms the scraper will look for (e.g. "Data Engineer", "Python").
+
+## 📁 Project Structure
+
+* `/entities` - SQLAlchemy ORM models (`Job`, `Company`, `City`, `Skills`, etc.)
+* `/services` - Core logic layers (`scraper_service.py`, `extractor_service.py`, `error_service.py`).
+* `/features_extractors` - Regex patterns and text parsing scripts.
+* `app.py` - Flask API router.
+* `database.py` - PostgreSQL connection and session management.
+* `utils.py` - Helpers and serialization methods.
+
+## ⚖️ Attributions & Acknowledgements
+
+As per the assignment requirements for academic propriety, the following libraries, frameworks, and resources were integrated into the originality of this codebase:
+* **[Python 3](https://docs.python.org/3/)**: Underlying language (PSF License).
+* **[Flask](https://flask.palletsprojects.com/)**: RESTful API framework routing & structure (BSD-3-Clause).
+* **[SQLAlchemy & Alembic](https://www.sqlalchemy.org/)**: Object Relational Mapper and migration tool used for Database Extraction & Loading (MIT License).
+* **[Flasgger](https://github.com/flasgger/flasgger)**: Auto-generating Swagger documentation UI for the Flask application (MIT License).
+* **[Pandas & NumPy](https://pandas.pydata.org/)**: Employed for structural data handling and CSV exports (BSD-3-Clause).
+* **[Requests](https://requests.readthedocs.io/)**: Used strictly for the Data Acquisition (scraping) phase of the pipeline interacting with target endpoints (Apache 2.0).
+* Regex expressions and web-scraping logic algorithms constitute original logic developed by the author.
+
+*Note: In accordance with submission guidelines, the executable code along with inline text-cell documentation is provided as an Editor-shared Colab Notebook tracking progressive development.*
