@@ -29,6 +29,9 @@
                 <li class="nav-item" data-target="jobs-view">
                     <i class='bx bx-briefcase-alt-2'></i> Job Posts
                 </li>
+                <li class="nav-item" data-target="processed-jobs-view">
+                    <i class='bx bx-check-shield'></i> Processed Jobs
+                </li>
                 <li class="nav-item" data-target="terms-view">
                     <i class='bx bx-search-alt'></i> Search Terms
                 </li>
@@ -71,12 +74,19 @@
             <div class="views-container">
                 <!-- Dashboard View -->
                 <section id="dashboard-view" class="view active">
-                    <div class="metrics-grid">
+                    <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr);">
                         <div class="metric-card glass">
                             <div class="metric-icon"><i class='bx bx-briefcase'></i></div>
                             <div class="metric-info">
-                                <h3>Total Jobs</h3>
+                                <h3>Total Scraped</h3>
                                 <h2 id="metric-jobs-count">--</h2>
+                            </div>
+                        </div>
+                        <div class="metric-card glass" style="border-color: rgba(16, 185, 129, 0.3);">
+                            <div class="metric-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--success);"><i class='bx bx-check-shield'></i></div>
+                            <div class="metric-info">
+                                <h3>Processed</h3>
+                                <h2 id="metric-processed-count">--</h2>
                             </div>
                         </div>
                         <div class="metric-card glass">
@@ -137,6 +147,33 @@
                     </div>
                 </section>
 
+                <!-- Processed Jobs View -->
+                <section id="processed-jobs-view" class="view">
+                    <div class="panel glass full-height">
+                        <div class="panel-header flex-between">
+                            <h2><i class='bx bx-check-shield'></i> Structured Database</h2>
+                            <button class="btn outline small" id="btn-refresh-processed"><i class='bx bx-refresh'></i> Refresh</button>
+                        </div>
+                        <div class="table-container">
+                            <table class="data-table" id="processed-jobs-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>Title</th>
+                                        <th>Company</th>
+                                        <th>Location</th>
+                                        <th>Salary</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td colspan="6" class="text-center text-muted">Loading structured jobs...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- Jobs View -->
                 <section id="jobs-view" class="view">
                     <div class="panel glass full-height">
@@ -155,6 +192,7 @@
                                         <th>Workplace</th>
                                         <th>Published</th>
                                         <th>Platform</th>
+                                        <th>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -214,6 +252,7 @@
                                         <th width="150">Timestamp (UTC)</th>
                                         <th width="120">Context</th>
                                         <th>Error Message</th>
+                                        <th width="80">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -230,6 +269,102 @@
     
     <!-- Notification Toast -->
     <div id="toast-container" class="toast-container"></div>
+
+    <!-- Modals -->
+    <div id="job-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content glass">
+            <div class="modal-header">
+                <h2 id="modal-job-title">Job Title</h2>
+                <button class="action-btn" onclick="closeModal('job-modal')"><i class='bx bx-x'></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="job-meta-flex">
+                    <span id="modal-job-company" class="badge neutral">Company</span>
+                    <span id="modal-job-location" class="badge neutral">Location</span>
+                    <a id="modal-job-url" href="#" target="_blank" class="badge info"><i class='bx bx-link-external'></i> View Original Page</a>
+                </div>
+                
+                <h3 class="mt-4 text-secondary">Extracted Features</h3>
+                <div class="features-grid">
+                    <div class="feature-box">
+                        <h4>Skills</h4>
+                        <div id="modal-job-skills" class="pill-container"></div>
+                    </div>
+                    <div class="feature-box">
+                        <h4>Badges / Tags</h4>
+                        <div id="modal-job-badges" class="pill-container"></div>
+                    </div>
+                    <div class="feature-box">
+                        <h4>Disabilities Accepted</h4>
+                        <span id="modal-job-disabilities">N/A</span>
+                    </div>
+                </div>
+
+                <h3 class="mt-4 text-secondary">Description Snippet</h3>
+                <div class="raw-box mt-2" id="modal-job-desc"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="error-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content glass">
+            <div class="modal-header">
+                <h2 class="text-danger"><i class='bx bx-bug'></i> System Log Details</h2>
+                <button class="action-btn" onclick="closeModal('error-modal')"><i class='bx bx-x'></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="status-box">
+                    <div class="status-row"><span>Error ID:</span><span id="modal-err-id"></span></div>
+                    <div class="status-row"><span>Timestamp:</span><span id="modal-err-time"></span></div>
+                    <div class="status-row"><span>Source/Context:</span><span id="modal-err-context"></span></div>
+                    <div class="status-row"><span>Search Term Trigger:</span><span id="modal-err-term"></span></div>
+                    <div class="status-row"><span>Pagination Page:</span><span id="modal-err-page"></span></div>
+                </div>
+                <h3 class="mt-4 text-secondary">Raw Message</h3>
+                <pre class="raw-box mt-2 text-danger" id="modal-err-msg"></pre>
+                
+                <h3 class="mt-4 text-secondary">Raw Request Payload</h3>
+                <pre class="raw-box mt-2 text-muted" id="modal-err-payload"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Processed Job Modal -->
+    <div id="processed-job-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content glass">
+            <div class="modal-header">
+                <h2 id="pj-title" style="color: var(--success)"><i class='bx bx-check-shield'></i> Processed Job</h2>
+                <button class="action-btn" onclick="closeModal('processed-job-modal')"><i class='bx bx-x'></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="job-meta-flex">
+                    <span id="pj-company" class="badge neutral">Company</span>
+                    <span id="pj-location" class="badge neutral">Location</span>
+                    <span id="pj-contract" class="badge neutral">Contract Type</span>
+                    <span id="pj-salary" class="badge success">Salary</span>
+                </div>
+                
+                <h3 class="mt-4 text-secondary">Normalized Requirements</h3>
+                <div class="features-grid" style="grid-template-columns: 1fr 1fr;">
+                    <div class="feature-box">
+                        <h4>Hard Skills</h4>
+                        <div id="pj-hardskills" class="pill-container"></div>
+                    </div>
+                    <div class="feature-box">
+                        <h4>Soft Skills</h4>
+                        <div id="pj-softskills" class="pill-container"></div>
+                    </div>
+                    <div class="feature-box" style="grid-column: span 2;">
+                        <h4>Nice-To-Have Skills</h4>
+                        <div id="pj-nicetohave" class="pill-container"></div>
+                    </div>
+                </div>
+
+                <h3 class="mt-4 text-secondary">Raw Tech Stack Mapping</h3>
+                <pre class="raw-box mt-2 text-muted" id="pj-techstack"></pre>
+            </div>
+        </div>
+    </div>
 
     <script src="/frontend/script.js"></script>
 </body>

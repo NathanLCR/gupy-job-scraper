@@ -39,6 +39,7 @@ function initNavigation() {
             // Trigger specific view loads
             pageTitle.innerText = item.innerText.trim();
             if (targetId === 'jobs-view') fetchJobs();
+            if (targetId === 'processed-jobs-view') fetchProcessedJobs();
             if (targetId === 'terms-view') fetchSearchTerms();
             if (targetId === 'errors-view') fetchErrors();
             if (targetId === 'dashboard-view') fetchDashboardMetrics();
@@ -124,6 +125,11 @@ function initActionButtons() {
 
     // Refresh Errors
     document.getElementById('btn-refresh-errors').addEventListener('click', fetchErrors);
+    
+    // Refresh Processed Jobs
+    if (document.getElementById('btn-refresh-processed')) {
+        document.getElementById('btn-refresh-processed').addEventListener('click', fetchProcessedJobs);
+    }
 }
 
 // --- API Fetches & Renders ---
@@ -178,26 +184,18 @@ function updateScrapeStatusUI(data) {
 
 async function fetchDashboardMetrics() {
     try {
-        // Parallel fetch for metric counts
-        const [jobsRes, termsRes, errorsRes] = await Promise.all([
-            fetch(`${API_BASE}/job-posts?limit=1`),
-            fetch(`${API_BASE}/search-terms`),
+        const [statsRes, errorsRes] = await Promise.all([
+            fetch(`${API_BASE}/stats`),
             fetch(`${API_BASE}/errors?limit=50`)
         ]);
 
-        const jobs = await jobsRes.json();
-        const terms = await termsRes.json();
+        const stats = await statsRes.json();
         const errors = await errorsRes.json();
 
-        // Hack for total jobs because API doesn't expose count. We show "--" or length of a full fetch if small.
-        // If the user wants true count, they need a /stats endpoint, but we can just say "Tracking"
-        // Since we did limit=1, we can't tell total. Let's just do a rough fetch of limit 500.
-        const jResFull = await fetch(`${API_BASE}/job-posts?limit=500`);
-        const jFull = await jResFull.json();
-        document.getElementById('metric-jobs-count').innerText = jFull.length + (jFull.length === 500 ? '+' : '');
-
-        document.getElementById('metric-terms-count').innerText = terms.length;
-        document.getElementById('metric-errors-count').innerText = errors.length;
+        document.getElementById('metric-jobs-count').innerText = stats.total_jobs || 0;
+        document.getElementById('metric-processed-count').innerText = stats.total_processed || 0;
+        document.getElementById('metric-terms-count').innerText = stats.total_terms || 0;
+        document.getElementById('metric-errors-count').innerText = stats.total_errors || 0;
 
         renderErrorChart(errors);
 
@@ -212,20 +210,21 @@ async function fetchJobs() {
         const jobs = await res.json();
         const tbody = document.querySelector('#jobs-table tbody');
         
-        if (jobs.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No jobs found.</td></tr>';
+        if (!jobs || jobs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No jobs found.</td></tr>';
             return;
         }
 
         tbody.innerHTML = jobs.map(j => `
             <tr>
                 <td class="text-muted">#${j.id}</td>
-                <td><strong>${escapeHTML(j.title)}</strong></td>
-                <td>${escapeHTML(j.company)}</td>
+                <td><strong>${escapeHTML(j.name)}</strong></td>
+                <td>${escapeHTML(j.career_page_name || 'N/A')}</td>
                 <td>${escapeHTML(j.city || '')} / ${escapeHTML(j.state || '')}</td>
                 <td>${escapeHTML(j.workplace_type || '')}</td>
-                <td>${new Date(j.published_date).toLocaleDateString()}</td>
-                <td><span class="badge neutral">${escapeHTML(j.scraper_type)}</span></td>
+                <td>${j.published_date ? new Date(j.published_date).toLocaleDateString() : 'N/A'}</td>
+                <td><span class="badge neutral">${escapeHTML(j.career_page_url ? new URL(j.career_page_url).hostname : 'Direct')}</span></td>
+                <td><button class="btn small outline" onclick="openJobModal(${j.id})">Details</button></td>
             </tr>
         `).join('');
     } catch (e) {
@@ -291,28 +290,171 @@ window.deleteTerm = async (id) => {
     }
 };
 
+// store global errors to avoid refetching on click
+let lastErrors = [];
+
 async function fetchErrors() {
     try {
         const res = await fetch(`${API_BASE}/errors?limit=50`);
         const errors = await res.json();
+        lastErrors = errors;
         const tbody = document.querySelector('#errors-table tbody');
         
-        if (errors.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">System is healthy. No recent errors.</td></tr>';
+        if (!errors || errors.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">System is healthy. No recent errors.</td></tr>';
             return;
         }
 
         tbody.innerHTML = errors.map(e => `
             <tr>
                 <td class="text-muted">${new Date(e.created_at).toLocaleString()}</td>
-                <td><span class="badge ${e.context === 'App' ? 'neutral' : 'warning'}">${escapeHTML(e.context || 'System')}</span></td>
-                <td class="break-word" style="color: var(--danger); font-family: monospace; font-size: 13px;">${escapeHTML(e.error_message)}</td>
+                <td><span class="badge ${e.source === 'scraper' ? 'neutral' : 'warning'}">${escapeHTML(e.source || 'System')}</span></td>
+                <td class="break-word" style="color: var(--danger); font-family: monospace; font-size: 13px;">${escapeHTML(e.message)}</td>
+                <td><button class="btn small outline" onclick="openErrorModal(${e.id})">Inspect</button></td>
             </tr>
         `).join('');
     } catch (e) {
         showToast('Failed to load errors', 'error');
     }
 }
+
+async function fetchProcessedJobs() {
+    try {
+        const res = await fetch(`${API_BASE}/jobs?limit=100`);
+        const jobs = await res.json();
+        const tbody = document.querySelector('#processed-jobs-table tbody');
+        
+        if (!jobs || jobs.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No structured jobs found.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = jobs.map(j => `
+            <tr>
+                <td class="text-muted">#${j.id}</td>
+                <td><strong>${escapeHTML(j.job_title)}</strong></td>
+                <td>${escapeHTML(j.company || 'N/A')}</td>
+                <td>${escapeHTML(j.city || '')} ${escapeHTML(j.state || '')}</td>
+                <td><span class="badge success">${j.salary ? '$' + j.salary : 'N/A'}</span></td>
+                <td><button class="btn small outline" onclick="openProcessedModal(${j.id})">Inspect</button></td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        showToast('Failed to load structured jobs', 'error');
+    }
+}
+
+// --- Modals Logic ---
+async function openJobModal(id) {
+    try {
+        const res = await fetch(`${API_BASE}/job-posts/${id}`);
+        if (!res.ok) throw new Error('Not found');
+        const job = await res.json();
+        
+        document.getElementById('modal-job-title').innerText = job.name || 'Unknown Role';
+        document.getElementById('modal-job-company').innerText = job.career_page_name || 'Unknown Company';
+        document.getElementById('modal-job-location').innerText = `${job.city || ''} ${job.state || ''} ${job.country || ''}`.trim() || 'Remote / Unknown';
+        
+        const urlEl = document.getElementById('modal-job-url');
+        if (job.job_url || job.career_page_url) {
+            urlEl.href = job.job_url || job.career_page_url;
+            urlEl.style.display = 'inline-flex';
+        } else {
+            urlEl.style.display = 'none';
+        }
+        
+        document.getElementById('modal-job-desc').innerText = job.description || 'No description provided.';
+        
+        const skillsContainer = document.getElementById('modal-job-skills');
+        try {
+            const skillArray = job.skills ? JSON.parse(job.skills) : [];
+            if (Array.isArray(skillArray) && skillArray.length) {
+                skillsContainer.innerHTML = skillArray.map(s => `<span class="pill">${escapeHTML(s)}</span>`).join('');
+            } else {
+                skillsContainer.innerHTML = `<span class="pill">${escapeHTML(job.skills || 'None')}</span>`;
+            }
+        } catch { skillsContainer.innerHTML = `<span class="pill">${escapeHTML(job.skills || 'None')}</span>`; }
+
+        const badgesContainer = document.getElementById('modal-job-badges');
+        try {
+            const badgeArray = job.badges ? JSON.parse(job.badges) : [];
+            if (Array.isArray(badgeArray) && badgeArray.length) {
+                badgesContainer.innerHTML = badgeArray.map(s => `<span class="pill">${escapeHTML(s)}</span>`).join('');
+            } else {
+                badgesContainer.innerHTML = `<span class="pill">${escapeHTML(job.badges || 'None')}</span>`;
+            }
+        } catch { badgesContainer.innerHTML = `<span class="pill">${escapeHTML(job.badges || 'None')}</span>`; }
+        
+        document.getElementById('modal-job-disabilities').innerText = job.disabilities ? "Yes" : (job.disabilities === false ? "No" : "Not specified");
+
+        document.getElementById('job-modal').style.display = 'flex';
+    } catch(e) {
+        showToast('Failed to load job details', 'error');
+    }
+}
+
+function openErrorModal(id) {
+    const error = lastErrors.find(e => e.id === id);
+    if (!error) return;
+    
+    document.getElementById('modal-err-id').innerText = error.id;
+    document.getElementById('modal-err-time').innerText = new Date(error.created_at).toLocaleString();
+    document.getElementById('modal-err-context').innerText = error.source || 'N/A';
+    document.getElementById('modal-err-term').innerText = error.term || 'N/A';
+    document.getElementById('modal-err-page').innerText = error.page || 'N/A';
+    
+    document.getElementById('modal-err-msg').innerText = error.message || 'No message';
+    
+    try {
+        const formattedPayload = error.payload ? JSON.stringify(JSON.parse(error.payload), null, 2) : 'No payload';
+        document.getElementById('modal-err-payload').innerText = formattedPayload;
+    } catch(e) {
+        document.getElementById('modal-err-payload').innerText = error.payload || 'No payload';
+    }
+    
+    document.getElementById('error-modal').style.display = 'flex';
+}
+
+async function openProcessedModal(id) {
+    try {
+        const res = await fetch(`${API_BASE}/jobs/${id}`);
+        if (!res.ok) throw new Error('Not found');
+        const pj = await res.json();
+        
+        document.getElementById('pj-title').innerText = pj.job_title || 'Processed Job';
+        document.getElementById('pj-company').innerText = pj.company || 'Unknown Company';
+        document.getElementById('pj-location').innerText = `${pj.city || ''} ${pj.state || ''}`.trim() || 'Location TBD';
+        document.getElementById('pj-contract').innerText = pj.contract_type || 'Full Time';
+        document.getElementById('pj-salary').innerText = pj.salary ? `$${pj.salary}` : 'Salary Undisclosed';
+        
+        const formatPills = (arr) => {
+            if (!arr || arr.length === 0) return '<span class="text-muted">None</span>';
+            return arr.map(s => `<span class="pill">${escapeHTML(s)}</span>`).join('');
+        };
+        
+        document.getElementById('pj-hardskills').innerHTML = formatPills(pj.hard_skills);
+        document.getElementById('pj-softskills').innerHTML = formatPills(pj.soft_skills);
+        document.getElementById('pj-nicetohave').innerHTML = formatPills(pj.nice_to_have_skills);
+        
+        const stackStr = pj.tech_stack ? JSON.stringify(pj.tech_stack, null, 2) : '[]';
+        document.getElementById('pj-techstack').innerText = stackStr;
+
+        document.getElementById('processed-job-modal').style.display = 'flex';
+    } catch(e) {
+        showToast('Failed to load structured job details', 'error');
+    }
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).style.display = 'none';
+}
+
+// Close modals when clicking overlay
+document.querySelectorAll('.modal-overlay').forEach(el => {
+    el.addEventListener('click', (e) => {
+        if(e.target === el) el.style.display = 'none';
+    });
+});
 
 function renderErrorChart(errors) {
     const ctx = document.getElementById('errorChart');

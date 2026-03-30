@@ -7,10 +7,10 @@ from threading import Lock, Thread
 from flasgger import Swagger
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, func
 
 from database import SessionLocal, init_db
-from entities import ErrorLog, JobsPost, SearchTerm
+from entities import ErrorLog, JobsPost, SearchTerm, Job
 from services.scraper_service import populate_database, scrape
 from swagger_config import SWAGGER_CONFIG, SWAGGER_TEMPLATE
 from utils import (
@@ -22,6 +22,7 @@ from utils import (
     _serialize_error,
     _serialize_job_post,
     _serialize_search_term,
+    _serialize_job,
 )
 
 
@@ -264,6 +265,116 @@ def get_job_posts() -> tuple:
             select(JobsPost).order_by(desc(JobsPost.published_date)).limit(limit).offset(offset)
         ).all()
         return jsonify([_serialize_job_post(row) for row in rows]), 200
+    finally:
+        db.close()
+
+
+@app.get("/job-posts/<int:job_id>")
+def get_job_post(job_id: int) -> tuple:
+    """Get extended details of a single job.
+    ---
+    tags:
+      - Job posts
+    parameters:
+      - name: job_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Job object with full features
+      404:
+        description: Not found
+    """
+    db = SessionLocal()
+    try:
+        row = db.get(JobsPost, job_id)
+        if row is None:
+            return jsonify({"error": "Job not found."}), 404
+        return jsonify(_serialize_job_post(row)), 200
+    finally:
+        db.close()
+
+
+@app.get("/jobs")
+def get_jobs_list() -> tuple:
+    """List processed, structural jobs.
+    ---
+    tags:
+      - Jobs
+    parameters:
+      - name: limit
+        in: query
+        type: integer
+        default: 100
+      - name: offset
+        in: query
+        type: integer
+        default: 0
+    responses:
+      200:
+        description: Array of processed job objects
+    """
+    limit = _get_pagination_limit()
+    offset = _get_pagination_offset()
+    db = SessionLocal()
+    try:
+        rows = db.scalars(
+            select(Job).order_by(desc(Job.id)).limit(limit).offset(offset)
+        ).all()
+        return jsonify([_serialize_job(row) for row in rows]), 200
+    finally:
+        db.close()
+
+@app.get("/jobs/<int:job_id>")
+def get_job_structured(job_id: int) -> tuple:
+    """Get full details of a processed job.
+    ---
+    tags:
+      - Jobs
+    parameters:
+      - name: job_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Job object with full relational structures
+      404:
+        description: Not found
+    """
+    db = SessionLocal()
+    try:
+        row = db.get(Job, job_id)
+        if row is None:
+            return jsonify({"error": "Job not found."}), 404
+        return jsonify(_serialize_job(row)), 200
+    finally:
+        db.close()
+
+
+@app.get("/stats")
+def get_stats() -> tuple:
+    """Get absolute row counts for UI metrics.
+    ---
+    tags:
+      - Health
+    responses:
+      200:
+        description: Metric counts
+    """
+    db = SessionLocal()
+    try:
+        jobs_count = db.scalar(select(func.count(JobsPost.id))) or 0
+        processed_jobs_count = db.scalar(select(func.count(Job.id))) or 0
+        terms_count = db.scalar(select(func.count(SearchTerm.id))) or 0
+        errors_count = db.scalar(select(func.count(ErrorLog.id))) or 0
+        return jsonify({
+            "total_jobs": jobs_count,
+            "total_processed": processed_jobs_count,
+            "total_terms": terms_count,
+            "total_errors": errors_count
+        }), 200
     finally:
         db.close()
 

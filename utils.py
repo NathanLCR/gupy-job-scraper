@@ -1,6 +1,6 @@
 from flask import request
 
-from entities import ErrorLog, JobsPost, SearchTerm
+from entities import ErrorLog, JobsPost, SearchTerm, Job
 
 
 def _parse_bool(value, default: bool = True) -> bool:
@@ -120,3 +120,18 @@ JOB_POSTS_CSV_HEADERS = [
     "skills",
     "badges",
 ]
+
+def _serialize_job(row: Job) -> dict:
+    return {
+        "id": row.id,
+        "job_title": row.job_title,
+        "salary": row.salary,
+        "tech_stack": row.tech_stack,
+        "company": row.company.name if row.company else None,
+        "contract_type": row.contract_type.name if getattr(row, "contract_type", None) else None,
+        "state": row.state.name if getattr(row, "state", None) else None,
+        "city": row.city.name if getattr(row, "city", None) else None,
+        "hard_skills": [skill.name for skill in row.hard_skills] if getattr(row, "hard_skills", None) else [],
+        "soft_skills": [skill.name for skill in row.soft_skills] if getattr(row, "soft_skills", None) else [],
+        "nice_to_have_skills": [skill.name for skill in row.nice_to_have_skills] if getattr(row, "nice_to_have_skills", None) else [],
+    }
