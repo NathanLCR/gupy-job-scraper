@@ -14,6 +14,7 @@ class Job(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    extractor_type: Mapped[str] = mapped_column(String(50), nullable=False)
     salary: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tech_stack: Mapped[list[str]] = mapped_column(JSON, default=list)
 

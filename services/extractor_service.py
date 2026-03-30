@@ -91,8 +91,9 @@ def regex_extractor():
                 new_job = Job(
                     id=job.id,
                     job_title=(job.name or "Vaga sem título")[:255],
+                    extractor_type="regex",
                     salary=salary_val,
-                    tech_stack=[],
+                    tech_stack=features.get("tech_stack") or [],
                     company_id=company.id,
                     contract_type_id=contract_obj.id if contract_obj else None,
                     state_id=state_obj.id if state_obj else None,
