@@ -94,4 +94,4 @@ def run_llm_extraction(limit: int = 5):
         db.close()
 
 if __name__ == "__main__":
-    run_llm_extraction(limit=5)
+    run_llm_extraction(limit=150)
