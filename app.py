@@ -3,12 +3,9 @@ import csv
 from datetime import UTC, datetime
 from io import StringIO
 from threading import Lock, Thread
-
 from flasgger import Swagger
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
-
 from sqlalchemy import desc, select, func
-
 from database import SessionLocal, init_db
 from entities import ErrorLog, JobsPost, SearchTerm, Job
 from services.scraper_service import populate_database, scrape
@@ -25,7 +22,6 @@ from utils import (
     _serialize_job,
 )
 
-
 app = Flask(__name__)
 Swagger(app, template=SWAGGER_TEMPLATE, config=SWAGGER_CONFIG)
 
@@ -39,7 +35,6 @@ _scrape_status = {
 }
 
 def build_job_posts_csv() -> tuple[bytes, str]:
-    """Return UTF-8 CSV bytes (with BOM for Excel) and suggested filename."""
     db = SessionLocal()
     try:
         rows = db.scalars(select(JobsPost).order_by(desc(JobsPost.published_date))).all()
@@ -48,13 +43,11 @@ def build_job_posts_csv() -> tuple[bytes, str]:
         writer.writerow(JOB_POSTS_CSV_HEADERS)
         for row in rows:
             writer.writerow(_job_post_to_csv_row(row))
-        # utf-8-sig adds BOM so Excel opens UTF-8 correctly
         data = buffer.getvalue().encode("utf-8-sig")
         filename = f"job_posts_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
         return data, filename
     finally:
         db.close()
-
 
 def _run_scraper(mode: str) -> None:
     with _scrape_lock:
@@ -75,7 +68,6 @@ def _run_scraper(mode: str) -> None:
         _scrape_status["running"] = False
         _scrape_status["finished_at"] = datetime.now(UTC).isoformat()
 
-
 @app.route("/")
 def index():
     return redirect("/dashboard")
@@ -88,10 +80,9 @@ def dashboard():
 def frontend_static(path):
     return send_from_directory('frontend', path)
 
-
 @app.get("/health")
 def health() -> tuple:
-    """Service health check.
+    """
     ---
     tags:
       - Health
@@ -107,10 +98,9 @@ def health() -> tuple:
     """
     return jsonify({"status": "ok"}), 200
 
-
 @app.get("/docs")
 def docs_redirect() -> tuple:
-    """Redirect to Swagger UI.
+    """
     ---
     tags:
       - Health
@@ -120,10 +110,9 @@ def docs_redirect() -> tuple:
     """
     return redirect("/apidocs/", code=302)
 
-
 @app.post("/database/init")
 def initialize_database() -> tuple:
-    """Create all SQLAlchemy tables if they do not exist.
+    """
     ---
     tags:
       - Database
@@ -140,10 +129,9 @@ def initialize_database() -> tuple:
     init_db()
     return jsonify({"message": "Database initialized"}), 200
 
-
 @app.post("/scrape/start")
 def start_scrape() -> tuple:
-    """Start background scrape (incremental or full populate).
+    """
     ---
     tags:
       - Scraper
@@ -180,10 +168,9 @@ def start_scrape() -> tuple:
     thread.start()
     return jsonify({"message": "Scrape started", "mode": mode}), 202
 
-
 @app.get("/scrape/status")
 def scrape_status() -> tuple:
-    """Current scrape job status (running, timestamps, error if any).
+    """
     ---
     tags:
       - Scraper
@@ -210,10 +197,9 @@ def scrape_status() -> tuple:
     """
     return jsonify(_scrape_status), 200
 
-
 @app.get("/errors")
 def get_errors() -> tuple:
-    """List recent error log entries (newest first).
+    """
     ---
     tags:
       - Errors
@@ -235,10 +221,9 @@ def get_errors() -> tuple:
     finally:
         db.close()
 
-
 @app.get("/job-posts")
 def get_job_posts() -> tuple:
-    """List job posts (newest by published_date first).
+    """
     ---
     tags:
       - Job posts
@@ -268,10 +253,9 @@ def get_job_posts() -> tuple:
     finally:
         db.close()
 
-
 @app.get("/job-posts/<int:job_id>")
 def get_job_post(job_id: int) -> tuple:
-    """Get extended details of a single job.
+    """
     ---
     tags:
       - Job posts
@@ -295,10 +279,9 @@ def get_job_post(job_id: int) -> tuple:
     finally:
         db.close()
 
-
 @app.get("/jobs")
 def get_jobs_list() -> tuple:
-    """List processed, structural jobs.
+    """
     ---
     tags:
       - Jobs
@@ -328,7 +311,7 @@ def get_jobs_list() -> tuple:
 
 @app.get("/jobs/<int:job_id>")
 def get_job_structured(job_id: int) -> tuple:
-    """Get full details of a processed job.
+    """
     ---
     tags:
       - Jobs
@@ -352,10 +335,9 @@ def get_job_structured(job_id: int) -> tuple:
     finally:
         db.close()
 
-
 @app.get("/stats")
 def get_stats() -> tuple:
-    """Get absolute row counts for UI metrics.
+    """
     ---
     tags:
       - Health
@@ -378,10 +360,9 @@ def get_stats() -> tuple:
     finally:
         db.close()
 
-
 @app.get("/job-posts/export")
 def export_job_posts_csv() -> tuple:
-    """Download all job posts as a CSV file (Excel-friendly UTF-8).
+    """
     ---
     tags:
       - Job posts
@@ -404,10 +385,9 @@ def export_job_posts_csv() -> tuple:
         200,
     )
 
-
 @app.get("/search-terms")
 def get_search_terms() -> tuple:
-    """List all search terms used by the scraper.
+    """
     ---
     tags:
       - Search terms
@@ -422,10 +402,9 @@ def get_search_terms() -> tuple:
     finally:
         db.close()
 
-
 @app.post("/search-terms")
 def create_search_term() -> tuple:
-    """Create a search term.
+    """
     ---
     tags:
       - Search terms
@@ -471,10 +450,9 @@ def create_search_term() -> tuple:
     finally:
         db.close()
 
-
 @app.put("/search-terms/<int:term_id>")
 def update_search_term(term_id: int) -> tuple:
-    """Update a search term by id.
+    """
     ---
     tags:
       - Search terms
@@ -527,10 +505,9 @@ def update_search_term(term_id: int) -> tuple:
     finally:
         db.close()
 
-
 @app.delete("/search-terms/<int:term_id>")
 def delete_search_term(term_id: int) -> tuple:
-    """Delete a search term by id.
+    """
     ---
     tags:
       - Search terms
@@ -556,10 +533,9 @@ def delete_search_term(term_id: int) -> tuple:
     finally:
         db.close()
 
-
 @app.post("/extract")
-def extract():
-    """Extract features from job posts.
+def extract_endpoint():
+    """
     ---
     tags:
       - Extractor

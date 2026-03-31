@@ -14,7 +14,6 @@ from entities import (
 from features_extractors.regex_extractor import extract
 from services.error_service import log_error
 
-
 def get_or_create(session, model, **kwargs):
     instance = session.query(model).filter_by(**kwargs).first()
     if not instance:

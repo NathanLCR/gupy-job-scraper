@@ -1,17 +1,13 @@
 from __future__ import annotations
-
 import json
 from datetime import UTC, date, datetime
 from random import randint
 from time import sleep
 from typing import Any
-
 import requests
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-
 from services.error_service import log_error
-
 from database import SessionLocal, init_db
 from entities import JobsPost, SearchTerm
 
@@ -38,7 +34,6 @@ DEFAULT_SEARCH_TERMS = [
 FETCH_MAX_RETRIES = 3
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
 
-
 def parse_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -50,7 +45,6 @@ def parse_datetime(value: str | None) -> datetime | None:
     except ValueError:
         return None
 
-
 def parse_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -58,7 +52,6 @@ def parse_date(value: str | None) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
-
 
 def get_active_search_terms(db) -> list[str]:
     terms = db.scalars(
@@ -75,9 +68,14 @@ def get_active_search_terms(db) -> list[str]:
     )
     return list(DEFAULT_SEARCH_TERMS)
 
-
 def fetch_gupy_jobs_post(term: str, page: int, limit: int) -> dict[str, Any] | None:
-    params = {"jobName": term, "limit": limit, "offset": str((page * limit) - limit)}
+    params = {
+        "jobName": term,
+        "limit": limit,
+        "offset": str((page * limit) - limit),
+        "sortBy": "publishedDate",
+        "sortOrder": "desc",
+    }
 
     for attempt in range(1, FETCH_MAX_RETRIES + 1):
         try:
@@ -154,7 +152,6 @@ def fetch_gupy_jobs_post(term: str, page: int, limit: int) -> dict[str, Any] | N
 
     return None
 
-
 def _build_jobs_post(row: dict[str, Any]) -> JobsPost:
     return JobsPost(
         id=row["id"],
@@ -179,7 +176,6 @@ def _build_jobs_post(row: dict[str, Any]) -> JobsPost:
         badges=json.dumps(row.get("badges"), ensure_ascii=False),
     )
 
-
 def insert_job_post(
     db,
     row: dict[str, Any],
@@ -200,7 +196,6 @@ def insert_job_post(
     except IntegrityError:
         existing_ids.add(row_id)
         return False
-
 
 def populate_database(limit: int = 20) -> int:
     init_db()
@@ -251,7 +246,6 @@ def populate_database(limit: int = 20) -> int:
 
     print(f"Initial population inserted {inserted} jobs.")
     return inserted
-
 
 def scrape() -> None:
     init_db()
