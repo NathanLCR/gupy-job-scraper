@@ -46,4 +46,24 @@ class Job(Base):
         secondary=job_nice_to_have_skills,
         back_populates="jobs",
     )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "job_title": self.job_title,
+            "extractor_type": self.extractor_type,
+            "salary": self.salary,
+            "tech_stack": self.tech_stack,
+            "company_id": self.company_id,
+            "contract_type_id": self.contract_type_id,
+            "state_id": self.state_id,
+            "city_id": self.city_id,
+            "company": self.company.name if self.company else None,
+            "contract_type": self.contract_type.name if self.contract_type else None,
+            "state": self.state.name if self.state else None,
+            "city": self.city.name if self.city else None,
+            "hard_skills": [skill.name for skill in self.hard_skills],
+            "soft_skills": [skill.name for skill in self.soft_skills],
+            "nice_to_have_skills": [skill.name for skill in self.nice_to_have_skills],
+        }
         

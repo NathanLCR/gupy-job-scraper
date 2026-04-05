@@ -12,3 +12,9 @@ class SoftSkill(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
 
     jobs = relationship("Job", secondary=job_soft_skills, back_populates="soft_skills")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+        }

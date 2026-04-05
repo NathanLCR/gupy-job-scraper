@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from services.error_service import log_error
 from database import SessionLocal, init_db
-from entities import JobsPost, SearchTerm
+from entities import JobPost, SearchTerm
+from utils import parse_datetime, parse_date
 
 BASE_URL = "https://employability-portal.gupy.io/api/v1/jobs"
 HEADERS = {
@@ -33,25 +34,6 @@ DEFAULT_SEARCH_TERMS = [
 
 FETCH_MAX_RETRIES = 3
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
-
-def parse_datetime(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is not None:
-            return parsed.astimezone(UTC).replace(tzinfo=None)
-        return parsed
-    except ValueError:
-        return None
-
-def parse_date(value: str | None) -> date | None:
-    if not value:
-        return None
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return None
 
 def get_active_search_terms(db) -> list[str]:
     terms = db.scalars(
@@ -152,8 +134,8 @@ def fetch_gupy_jobs_post(term: str, page: int, limit: int) -> dict[str, Any] | N
 
     return None
 
-def _build_jobs_post(row: dict[str, Any]) -> JobsPost:
-    return JobsPost(
+def _build_jobs_post(row: dict[str, Any]) -> JobPost:
+    return JobPost(
         id=row["id"],
         company_id=row.get("companyId"),
         name=row.get("name", ""),
@@ -203,7 +185,7 @@ def populate_database(limit: int = 20) -> int:
     inserted = 0
 
     try:
-        existing_ids = set(db.scalars(select(JobsPost.id)).all())
+        existing_ids = set(db.scalars(select(JobPost.id)).all())
         search_terms = get_active_search_terms(db)
 
         if not search_terms:
@@ -247,13 +229,13 @@ def populate_database(limit: int = 20) -> int:
     print(f"Initial population inserted {inserted} jobs.")
     return inserted
 
-def scrape() -> None:
+def start_scrape() -> None:
     init_db()
     db = SessionLocal()
     inserted = 0
 
     try:
-        existing_ids = set(db.scalars(select(JobsPost.id)).all())
+        existing_ids = set(db.scalars(select(JobPost.id)).all())
         search_terms = get_active_search_terms(db)
 
         if not search_terms:

@@ -16,3 +16,9 @@ class NiceToHaveSkill(Base):
         secondary=job_nice_to_have_skills,
         back_populates="nice_to_have_skills",
     )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+        }

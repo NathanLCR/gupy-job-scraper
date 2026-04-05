@@ -3,7 +3,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
 from sqlalchemy import select
 from database import SessionLocal
-from entities import JobsPost
+from entities import JobPost
 
 MODEL_NAME = 'TechWolf/JobBERT-v3' 
 OUTPUT_CSV = 'extracted_jobs_bert.csv'
@@ -17,7 +17,7 @@ def extract_jobs_to_csv():
 
     db = SessionLocal()
     try:
-        query = select(JobsPost)
+        query = select(JobPost)
         
         jobs = db.scalars(query).all()
 

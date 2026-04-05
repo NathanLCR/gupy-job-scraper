@@ -5,9 +5,8 @@ from typing import Any
 import pandas as pd
 import requests
 from sqlalchemy import select
-
 from database import SessionLocal
-from entities import JobsPost
+from entities import JobPost
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 DEFAULT_MODEL = "llama3.1"
@@ -59,7 +58,7 @@ def run_llm_extraction(limit: int = 5):
     db = SessionLocal()
     try:
         print(f"Fetching {limit} jobs for LLM extraction...")
-        jobs = db.scalars(select(JobsPost).limit(limit)).all()
+        jobs = db.scalars(select(JobPost).limit(limit)).all()
         
         extracted_results = []
         for job in jobs:

@@ -6,7 +6,7 @@ from entities import (
     ContractType,
     HardSkill,
     Job,
-    JobsPost,
+    JobPost,
     NiceToHaveSkill,
     SoftSkill,
     State,
@@ -38,7 +38,7 @@ def parse_salary(salary_data):
 def regex_extractor():
     db = SessionLocal()
     try:
-        jobs_post = db.query(JobsPost).all()
+        jobs_post = db.query(JobPost).all()
         for job in jobs_post:
             try:
                 existing_job = db.query(Job).filter_by(id=job.id).first()

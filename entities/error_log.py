@@ -21,3 +21,15 @@ class ErrorLog(Base):
         nullable=False,
         server_default=func.now(),
     )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "source": self.source,
+            "message": self.message,
+            "term": self.term,
+            "page": self.page,
+            "request_limit": self.request_limit,
+            "payload": self.payload,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }

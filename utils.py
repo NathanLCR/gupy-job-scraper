@@ -1,6 +1,7 @@
 from flask import request
+from datetime import datetime, date, UTC
 
-from entities import ErrorLog, JobsPost, SearchTerm, Job
+from entities import ErrorLog, JobPost, SearchTerm, Job
 
 
 def _parse_bool(value, default: bool = True) -> bool:
@@ -31,7 +32,7 @@ def _get_pagination_offset(default: int = 0) -> int:
     return max(0, value)
 
 
-def _serialize_job_post(row: JobsPost) -> dict:
+def _serialize_job_post(row: JobPost) -> dict:
     return {
         "id": row.id,
         "company_id": row.company_id,
@@ -73,7 +74,7 @@ def _serialize_search_term(row: SearchTerm) -> dict:
     return {"id": row.id, "term": row.term, "is_active": row.is_active}
 
 
-def _job_post_to_csv_row(row: JobsPost) -> list:
+def _job_post_to_csv_row(row: JobPost) -> list:
     return [
         row.id,
         row.company_id,
@@ -135,3 +136,23 @@ def _serialize_job(row: Job) -> dict:
         "soft_skills": [skill.name for skill in row.soft_skills] if getattr(row, "soft_skills", None) else [],
         "nice_to_have_skills": [skill.name for skill in row.nice_to_have_skills] if getattr(row, "nice_to_have_skills", None) else [],
     }
+
+
+def parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(UTC).replace(tzinfo=None)
+        return parsed
+    except ValueError:
+        return None
+
+def parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None

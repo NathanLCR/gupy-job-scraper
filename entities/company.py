@@ -11,3 +11,9 @@ class Company(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
 
     jobs = relationship("Job", back_populates="company")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+        }

@@ -12,3 +12,9 @@ class State(Base):
 
     cities = relationship("City", back_populates="state")
     jobs = relationship("Job", back_populates="state")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+        }

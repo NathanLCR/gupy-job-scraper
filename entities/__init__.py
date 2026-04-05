@@ -5,7 +5,7 @@ from entities.contract_type import ContractType
 from entities.error_log import ErrorLog
 from entities.hard_skill import HardSkill
 from entities.job import Job
-from entities.jobs_post import JobsPost
+from entities.job_post import JobPost
 from entities.nice_to_have_skill import NiceToHaveSkill
 from entities.search_term import SearchTerm
 from entities.soft_skill import SoftSkill
@@ -19,7 +19,7 @@ __all__ = [
     "ErrorLog",
     "HardSkill",
     "Job",
-    "JobsPost",
+    "JobPost",
     "NiceToHaveSkill",
     "SearchTerm",
     "SoftSkill",

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from entities.base import Base
 
 
-class JobsPost(Base):
+class JobPost(Base):
     __tablename__ = "jobs_posts"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
@@ -29,3 +29,27 @@ class JobsPost(Base):
     disabilities: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     skills: Mapped[str | None] = mapped_column(Text, nullable=True)
     badges: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "company_id": self.company_id,
+            "name": self.name,
+            "description": self.description,
+            "career_page_id": self.career_page_id,
+            "career_page_name": self.career_page_name,
+            "career_page_logo": self.career_page_logo,
+            "career_page_url": self.career_page_url,
+            "job_type": self.job_type,
+            "published_date": self.published_date.isoformat() if self.published_date else None,
+            "application_deadline": self.application_deadline.isoformat() if self.application_deadline else None,
+            "is_remote_work": self.is_remote_work,
+            "city": self.city,
+            "state": self.state,
+            "country": self.country,
+            "job_url": self.job_url,
+            "workplace_type": self.workplace_type,
+            "disabilities": self.disabilities,
+            "skills": self.skills,
+            "badges": self.badges,
+        }

@@ -7,8 +7,8 @@ from flasgger import Swagger
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 from sqlalchemy import desc, select, func
 from database import SessionLocal, init_db
-from entities import ErrorLog, JobsPost, SearchTerm, Job
-from services.scraper_service import populate_database, scrape
+from entities import ErrorLog, JobPost, SearchTerm, Job
+from services.scraper_service import populate_database, start_scrape
 from swagger_config import SWAGGER_CONFIG, SWAGGER_TEMPLATE
 from utils import (
     JOB_POSTS_CSV_HEADERS,
@@ -37,7 +37,7 @@ _scrape_status = {
 def build_job_posts_csv() -> tuple[bytes, str]:
     db = SessionLocal()
     try:
-        rows = db.scalars(select(JobsPost).order_by(desc(JobsPost.published_date))).all()
+        rows = db.scalars(select(JobPost).order_by(desc(JobPost.published_date))).all()
         buffer = StringIO()
         writer = csv.writer(buffer)
         writer.writerow(JOB_POSTS_CSV_HEADERS)
@@ -61,7 +61,7 @@ def _run_scraper(mode: str) -> None:
         if mode == "populate":
             populate_database()
         else:
-            scrape()
+            start_scrape()
     except Exception as exc:
         _scrape_status["error"] = str(exc)
     finally:
@@ -130,7 +130,7 @@ def initialize_database() -> tuple:
     return jsonify({"message": "Database initialized"}), 200
 
 @app.post("/scrape/start")
-def start_scrape() -> tuple:
+def start_scrape_endpoint() -> tuple:
     """
     ---
     tags:
@@ -247,9 +247,9 @@ def get_job_posts() -> tuple:
     db = SessionLocal()
     try:
         rows = db.scalars(
-            select(JobsPost).order_by(desc(JobsPost.published_date)).limit(limit).offset(offset)
+            select(JobPost).order_by(desc(JobPost.published_date)).limit(limit).offset(offset)
         ).all()
-        return jsonify([_serialize_job_post(row) for row in rows]), 200
+        return jsonify([row.to_dict() for row in rows]), 200
     finally:
         db.close()
 
@@ -272,7 +272,7 @@ def get_job_post(job_id: int) -> tuple:
     """
     db = SessionLocal()
     try:
-        row = db.get(JobsPost, job_id)
+        row = db.get(JobPost, job_id)
         if row is None:
             return jsonify({"error": "Job not found."}), 404
         return jsonify(_serialize_job_post(row)), 200
@@ -347,7 +347,7 @@ def get_stats() -> tuple:
     """
     db = SessionLocal()
     try:
-        jobs_count = db.scalar(select(func.count(JobsPost.id))) or 0
+        jobs_count = db.scalar(select(func.count(JobPost.id))) or 0
         processed_jobs_count = db.scalar(select(func.count(Job.id))) or 0
         terms_count = db.scalar(select(func.count(SearchTerm.id))) or 0
         errors_count = db.scalar(select(func.count(ErrorLog.id))) or 0
@@ -533,7 +533,7 @@ def delete_search_term(term_id: int) -> tuple:
     finally:
         db.close()
 
-@app.post("/extract")
+@app.post("/regex-extract")
 def extract_endpoint():
     """
     ---

@@ -71,7 +71,7 @@ function initActionButtons() {
     // Extractor
     document.getElementById('btn-extract').addEventListener('click', async () => {
         try {
-            const res = await fetch(`${API_BASE}/extract`, { method: 'POST' });
+            const res = await fetch(`${API_BASE}/regex-extract`, { method: 'POST' });
             const data = await res.json();
             if (res.ok) {
                 showToast(data.message || 'Features extracted.', 'success');
