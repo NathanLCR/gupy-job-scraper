@@ -1,4 +1,6 @@
 import re
+from datetime import datetime, UTC
+from threading import Thread
 from database import SessionLocal
 from entities import (
     City,
@@ -22,6 +24,16 @@ def get_or_create(session, model, **kwargs):
         session.flush()
     return instance
 
+extractor_status = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+}
+
+def get_extractor_status():
+    return extractor_status
+
 def parse_salary(salary_data):
     if not salary_data:
         return None
@@ -36,21 +48,31 @@ def parse_salary(salary_data):
     return None
 
 def regex_extractor():
+    if extractor_status["running"]:
+        return
+
+    extractor_status["running"] = True
+    extractor_status["started_at"] = datetime.now(UTC).isoformat()
+    extractor_status["finished_at"] = None
+    extractor_status["error"] = None
+
     db = SessionLocal()
     try:
-        jobs_post = db.query(JobPost).all()
-        for job in jobs_post:
+        # Only fetch JobPosts that aren't already represented in the Jobs table
+        jobs_to_extract = (
+            db.query(JobPost)
+            .outerjoin(Job, JobPost.id == Job.id)
+            .filter(Job.id == None)
+            .all()
+        )
+        
+        for job in jobs_to_extract:
             try:
-                existing_job = db.query(Job).filter_by(id=job.id).first()
-                if existing_job:
-                    continue
-
+                # Features extraction stays the same but we now have a clean list
                 features = extract(job.description or "")
-
-                if not job.company_id:
-                    continue
                 
                 company = db.query(Company).filter_by(id=job.company_id).first()
+
                 if not company:
                     c_name = (job.career_page_name or f"Empresa {job.company_id}")[:255]
                     if db.query(Company).filter_by(name=c_name).first():
@@ -116,5 +138,15 @@ def regex_extractor():
                     source="regex_extractor",
                 )
                 print(f"Failed to process job {job.id}: {exc}")
+        
+    except Exception as general_exc:
+        extractor_status["error"] = str(general_exc)
     finally:
+        extractor_status["running"] = False
+        extractor_status["finished_at"] = datetime.now(UTC).isoformat()
         db.close()
+
+def start_extractor_thread():
+    thread = Thread(target=regex_extractor)
+    thread.daemon = True
+    thread.start()

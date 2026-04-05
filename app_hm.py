@@ -1,5 +1,5 @@
 from services.search_terms_service_hm import get_search_terms
-from services.extractor_service import regex_extractor
+from services.extractor_service import regex_extractor, start_extractor_thread, get_extractor_status
 from flask import Flask, send_from_directory, jsonify, redirect, request
 from services.scraper_service_hm import start_scrape_thread, get_scrape_status
 from services.error_service import get_errors
@@ -80,8 +80,12 @@ def deactive_search_term(id):
 
 @app.post("/regex-extract")
 def extract():
-    regex_extractor()
-    return jsonify({"message": "Features extracted"}), 200
+    start_extractor_thread()
+    return jsonify({"message": "Features extraction started"}), 202
+
+@app.get("/regex-extract/status")
+def extract_status():
+    return jsonify(get_extractor_status()), 200
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)
