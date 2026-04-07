@@ -4,14 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Gupy Scraper Dashboard</title>
+    <meta name="description" content="Monitor and manage your Gupy job scraping operations with real-time status, feature extraction, and structured data views.">
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/frontend/favicon.png">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Boxicons -->
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="/frontend/style.css">
 </head>
 <body>
@@ -65,16 +66,22 @@
                     <h1 id="page-title">Dashboard Overview</h1>
                     <p class="subtitle">Monitor and manage your scraping operations.</p>
                 </div>
-                <div class="scraper-status-pill" id="global-status-pill">
-                    <div class="status-indicator"></div>
-                    <span id="global-status-text">Idle</span>
+                <div class="header-status-pills">
+                    <div class="scraper-status-pill" id="global-status-pill" title="Scraper Status">
+                        <div class="status-indicator"></div>
+                        <span id="global-status-text">Idle</span>
+                    </div>
+                    <div class="scraper-status-pill extractor-pill" id="extractor-status-pill" title="Extractor Status">
+                        <div class="status-indicator" id="extractor-indicator"></div>
+                        <span id="extractor-status-text">Extractor Idle</span>
+                    </div>
                 </div>
             </header>
 
             <div class="views-container">
                 <!-- Dashboard View -->
                 <section id="dashboard-view" class="view active">
-                    <div class="metrics-grid" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="metrics-grid" style="grid-template-columns: repeat(6, 1fr);">
                         <div class="metric-card glass">
                             <div class="metric-icon"><i class='bx bx-briefcase'></i></div>
                             <div class="metric-info">
@@ -87,6 +94,20 @@
                             <div class="metric-info">
                                 <h3>Processed</h3>
                                 <h2 id="metric-processed-count">--</h2>
+                            </div>
+                        </div>
+                        <div class="metric-card glass">
+                            <div class="metric-icon"><i class='bx bx-line-chart'></i></div>
+                            <div class="metric-info">
+                                <h3>Avg. Daily Posts</h3>
+                                <h2 id="metric-avg-daily">--</h2>
+                            </div>
+                        </div>
+                        <div class="metric-card glass">
+                            <div class="metric-icon"><i class='bx bx-money'></i></div>
+                            <div class="metric-info">
+                                <h3>Avg. Salary</h3>
+                                <h2 id="metric-avg-salary">--</h2>
                             </div>
                         </div>
                         <div class="metric-card glass">
@@ -129,6 +150,21 @@
                                         <span id="sys-finished">--</span>
                                     </div>
                                 </div>
+                                <!-- Extractor Status -->
+                                <div class="status-box">
+                                    <div class="status-row" style="border-bottom: none; padding-bottom: 4px;">
+                                        <span style="font-weight: 600; color: var(--text-primary);"><i class='bx bx-layer' style="color: var(--accent-secondary);"></i> Feature Extractor</span>
+                                        <span id="ext-status" class="badge neutral">Idle</span>
+                                    </div>
+                                    <div class="status-row">
+                                        <span>Started:</span>
+                                        <span id="ext-started">--</span>
+                                    </div>
+                                    <div class="status-row">
+                                        <span>Finished:</span>
+                                        <span id="ext-finished">--</span>
+                                    </div>
+                                </div>
                                 <div class="action-buttons mt-4">
                                     <button class="btn primary full-width" id="dash-btn-scrape">Run Incremental Scrape</button>
                                     <button class="btn warning full-width mt-2" id="dash-btn-populate">Run Full Populate</button>
@@ -136,15 +172,29 @@
                             </div>
                         </div>
 
-                        <div class="panel glass chart-panel">
+                        <div class="panel glass top-list-panel">
                             <div class="panel-header">
-                                <h2><i class='bx bx-bar-chart-alt-2'></i> Recent Error Frequency</h2>
+                                <h2><i class='bx bx-code-block'></i> Top 5 Technologies</h2>
                             </div>
                             <div class="panel-body">
-                                <canvas id="errorChart"></canvas>
+                                <div id="top-technologies-list" class="list-container">
+                                    <div class="text-center text-muted">Loading...</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="panel glass top-list-panel">
+                            <div class="panel-header">
+                                <h2><i class='bx bx-map'></i> Top 5 Locations</h2>
+                            </div>
+                            <div class="panel-body">
+                                <div id="top-locations-list" class="list-container">
+                                    <div class="text-center text-muted">Loading...</div>
+                                </div>
                             </div>
                         </div>
                     </div>
+
                 </section>
 
                 <!-- Processed Jobs View -->
@@ -154,15 +204,37 @@
                             <h2><i class='bx bx-check-shield'></i> Structured Database</h2>
                             <button class="btn outline small" id="btn-refresh-processed"><i class='bx bx-refresh'></i> Refresh</button>
                         </div>
+                        <!-- Search & Filter Bar -->
+                        <div class="table-toolbar">
+                            <div class="search-box">
+                                <i class='bx bx-search'></i>
+                                <input type="text" id="pj-search" placeholder="Search by title, company..." class="toolbar-input">
+                            </div>
+                            <div class="toolbar-controls">
+                                <select id="pj-sort" class="toolbar-select">
+                                    <option value="id-desc">Newest First</option>
+                                    <option value="id-asc">Oldest First</option>
+                                    <option value="title-asc">Title A–Z</option>
+                                    <option value="title-desc">Title Z–A</option>
+                                    <option value="salary-desc">Salary High→Low</option>
+                                    <option value="salary-asc">Salary Low→High</option>
+                                </select>
+                                <select id="pj-page-size" class="toolbar-select small">
+                                    <option value="20">20</option>
+                                    <option value="50">50</option>
+                                    <option value="100" selected>100</option>
+                                </select>
+                            </div>
+                        </div>
                         <div class="table-container">
                             <table class="data-table" id="processed-jobs-table">
                                 <thead>
                                     <tr>
-                                        <th>ID</th>
-                                        <th>Title</th>
-                                        <th>Company</th>
+                                        <th class="sortable" data-sort="id">ID</th>
+                                        <th class="sortable" data-sort="title">Title</th>
+                                        <th class="sortable" data-sort="company">Company</th>
                                         <th>Location</th>
-                                        <th>Salary</th>
+                                        <th class="sortable" data-sort="salary">Salary</th>
                                         <th>Action</th>
                                     </tr>
                                 </thead>
@@ -171,6 +243,7 @@
                                 </tbody>
                             </table>
                         </div>
+                        <div class="pagination-bar" id="pj-pagination"></div>
                     </div>
                 </section>
 
@@ -181,26 +254,52 @@
                             <h2><i class='bx bx-briefcase-alt-2'></i> Job Postings Database</h2>
                             <button class="btn outline small" id="btn-export-csv"><i class='bx bx-export'></i> Export CSV</button>
                         </div>
+                        <!-- Search & Filter Bar -->
+                        <div class="table-toolbar">
+                            <div class="search-box">
+                                <i class='bx bx-search'></i>
+                                <input type="text" id="jobs-search" placeholder="Search by title, company, city..." class="toolbar-input">
+                            </div>
+                            <div class="toolbar-controls">
+                                <select id="jobs-filter-workplace" class="toolbar-select">
+                                    <option value="">All Workplaces</option>
+                                    <option value="remote">Remote</option>
+                                    <option value="hybrid">Hybrid</option>
+                                    <option value="on-site">On-site</option>
+                                </select>
+                                <select id="jobs-sort" class="toolbar-select">
+                                    <option value="date-desc">Newest First</option>
+                                    <option value="date-asc">Oldest First</option>
+                                    <option value="name-asc">Title A–Z</option>
+                                    <option value="name-desc">Title Z–A</option>
+                                </select>
+                                <select id="jobs-page-size" class="toolbar-select small">
+                                    <option value="20">20</option>
+                                    <option value="50">50</option>
+                                    <option value="100" selected>100</option>
+                                </select>
+                            </div>
+                        </div>
                         <div class="table-container">
                             <table class="data-table" id="jobs-table">
                                 <thead>
                                     <tr>
-                                        <th>ID</th>
-                                        <th>Title</th>
-                                        <th>Company</th>
+                                        <th class="sortable" data-sort="id">ID</th>
+                                        <th class="sortable" data-sort="name">Title</th>
+                                        <th class="sortable" data-sort="company">Company</th>
                                         <th>City / State</th>
                                         <th>Workplace</th>
-                                        <th>Published</th>
+                                        <th class="sortable" data-sort="date">Published</th>
                                         <th>Platform</th>
                                         <th>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <!-- Populated by JS -->
-                                    <tr><td colspan="7" class="text-center text-muted">Loading jobs...</td></tr>
+                                    <tr><td colspan="8" class="text-center text-muted">Loading jobs...</td></tr>
                                 </tbody>
                             </table>
                         </div>
+                        <div class="pagination-bar" id="jobs-pagination"></div>
                     </div>
                 </section>
 
@@ -230,7 +329,6 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <!-- Populated by JS -->
                                     <tr><td colspan="4" class="text-center text-muted">Loading terms...</td></tr>
                                 </tbody>
                             </table>
@@ -245,6 +343,20 @@
                             <h2><i class='bx bx-bug'></i> System Logs & Errors</h2>
                             <button class="btn outline small" id="btn-refresh-errors"><i class='bx bx-refresh'></i> Refresh</button>
                         </div>
+                        <!-- Search & Filter Bar -->
+                        <div class="table-toolbar">
+                            <div class="search-box">
+                                <i class='bx bx-search'></i>
+                                <input type="text" id="errors-search" placeholder="Search errors..." class="toolbar-input">
+                            </div>
+                            <div class="toolbar-controls">
+                                <select id="errors-filter-source" class="toolbar-select">
+                                    <option value="">All Sources</option>
+                                    <option value="scraper">Scraper</option>
+                                    <option value="regex_extractor">Extractor</option>
+                                </select>
+                            </div>
+                        </div>
                         <div class="table-container">
                             <table class="data-table" id="errors-table">
                                 <thead>
@@ -256,11 +368,11 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <!-- Populated by JS -->
-                                    <tr><td colspan="3" class="text-center text-muted">Loading errors...</td></tr>
+                                    <tr><td colspan="4" class="text-center text-muted">Loading errors...</td></tr>
                                 </tbody>
                             </table>
                         </div>
+                        <div class="pagination-bar" id="errors-pagination"></div>
                     </div>
                 </section>
             </div>

@@ -1,11 +1,12 @@
-from services.search_terms_service_hm import get_search_terms
+from services.search_terms_service_hm import get_search_terms, add_search_term, remove_search_term
 from services.extractor_service import regex_extractor, start_extractor_thread, get_extractor_status
 from flask import Flask, send_from_directory, jsonify, redirect, request
 from services.scraper_service_hm import start_scrape_thread, get_scrape_status
 from services.error_service import get_errors
-from services.job_service_hm import get_jobs
+from services.job_service_hm import get_jobs, get_job
 from services.stats_service import get_stats
 from services.jobs_post_service_hm import get_jobs_posts, get_job_post
+from services.features_service_hm import get_average_job_post_daily, get_top_5_technologies, get_top_5_locations, get_average_salary
 app = Flask(__name__)
 
 @app.route("/")
@@ -43,9 +44,7 @@ def stats():
 
 @app.get("/job-posts")
 def jobs_posts():
-    limit = request.args.get("limit", default=20, type=int)
-    page = request.args.get("page", default=1, type=int)
-    job_posts = get_jobs_posts(limit, page)
+    job_posts = get_jobs_posts()
     return jsonify([job_post.to_dict() for job_post in job_posts]), 200
 
 @app.get("/job-posts/<id>")
@@ -60,7 +59,8 @@ def jobs():
 
 @app.get("/jobs/<id>")
 def job(id):
-    return jsonify(get_job(id)), 200
+    job = get_job(id)
+    return jsonify(job.to_dict()), 200
 
 @app.get("/search-terms")
 def search_terms():
@@ -86,6 +86,25 @@ def extract():
 @app.get("/regex-extract/status")
 def extract_status():
     return jsonify(get_extractor_status()), 200
+
+
+@app.get("/features/average-job-post-daily")
+def average_job_post_daily():
+    return jsonify(get_average_job_post_daily()), 200
+
+@app.get("/features/top-5-technologies")
+def top_5_technologies():
+    technologies = get_top_5_technologies()
+    return jsonify(technologies), 200
+
+@app.get("/features/top-5-locations")
+def top_5_locations():
+    locations = get_top_5_locations()
+    return jsonify(locations), 200
+
+@app.get("/features/average-salary")
+def average_salary():
+    return jsonify(get_average_salary()), 200
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)

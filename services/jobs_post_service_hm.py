@@ -56,10 +56,9 @@ def create_job_post(jobs_raw):
         badges=json.dumps(jobs_raw.get("badges"), ensure_ascii=False) if jobs_raw.get("badges") else None
     )
 
-def get_jobs_posts(limit = 20, page = 1):
-    offset = (page - 1) * limit
+def get_jobs_posts():
     try:
-        query = Select(JobPost).order_by(JobPost.published_date.desc()).limit(limit).offset(offset)
+        query = Select(JobPost).order_by(JobPost.published_date.desc())
         return SessionLocal().scalars(query).all()
     except Exception as e:
         log_error(

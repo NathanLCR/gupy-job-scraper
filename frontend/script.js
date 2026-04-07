@@ -3,40 +3,46 @@ const views = document.querySelectorAll('.view');
 const navItems = document.querySelectorAll('.nav-item');
 const pageTitle = document.getElementById('page-title');
 
-// Base URL (Assuming frontend is served from the same host, use relative paths)
+// Base URL
 const API_BASE = '';
 
 // Chart Instance
-let errorChartInstance = null;
 let pollTimeout = null;
+let extractorPollTimeout = null;
 
-// Initialization
+// ==================== Data Caches ====================
+let cachedJobs = [];
+let cachedProcessedJobs = [];
+let cachedErrors = [];
+let lastErrors = [];
+
+// ==================== Initialization ====================
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     initActionButtons();
+    initToolbars();
     
     // Initial Data Fetches
     fetchDashboardMetrics();
     fetchScrapeStatus();
+    fetchExtractorStatus();
     
-    // Setup long polling for scraper status
+    // Setup long polling
     pollScrapeStatus();
+    pollExtractorStatus();
 });
 
-// --- Navigation ---
+// ==================== Navigation ====================
 function initNavigation() {
     navItems.forEach(item => {
         item.addEventListener('click', () => {
-            // Update active states
             navItems.forEach(nav => nav.classList.remove('active'));
             item.classList.add('active');
             
-            // Switch view
             const targetId = item.getAttribute('data-target');
             views.forEach(view => view.classList.remove('active'));
             document.getElementById(targetId).classList.add('active');
             
-            // Trigger specific view loads
             pageTitle.innerText = item.innerText.trim();
             if (targetId === 'jobs-view') fetchJobs();
             if (targetId === 'processed-jobs-view') fetchProcessedJobs();
@@ -47,8 +53,34 @@ function initNavigation() {
     });
 }
 
+// ==================== Toolbar Initialization ====================
+function initToolbars() {
+    // Jobs View
+    document.getElementById('jobs-search').addEventListener('input', debounce(() => renderJobsTable(), 250));
+    document.getElementById('jobs-filter-workplace').addEventListener('change', () => renderJobsTable());
+    document.getElementById('jobs-sort').addEventListener('change', () => renderJobsTable());
+    document.getElementById('jobs-page-size').addEventListener('change', () => { jobsCurrentPage = 1; renderJobsTable(); });
+
+    // Processed Jobs View
+    document.getElementById('pj-search').addEventListener('input', debounce(() => renderProcessedJobsTable(), 250));
+    document.getElementById('pj-sort').addEventListener('change', () => renderProcessedJobsTable());
+    document.getElementById('pj-page-size').addEventListener('change', () => { pjCurrentPage = 1; renderProcessedJobsTable(); });
+
+    // Errors View
+    document.getElementById('errors-search').addEventListener('input', debounce(() => renderErrorsTable(), 250));
+    document.getElementById('errors-filter-source').addEventListener('change', () => renderErrorsTable());
+}
+
+function debounce(fn, ms) {
+    let timer;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), ms);
+    };
+}
+
+// ==================== Action Buttons ====================
 function initActionButtons() {
-    // Scraper triggers
     const triggerScrape = async (mode) => {
         try {
             const res = await fetch(`${API_BASE}/scrape/start?mode=${mode}`, { method: 'POST' });
@@ -73,10 +105,11 @@ function initActionButtons() {
         try {
             const res = await fetch(`${API_BASE}/regex-extract`, { method: 'POST' });
             const data = await res.json();
-            if (res.ok) {
-                showToast(data.message || 'Features extracted.', 'success');
+            if (res.ok || res.status === 202) {
+                showToast(data.message || 'Feature extraction started.', 'success');
+                fetchExtractorStatus();
             } else {
-                showToast('Failed to extract features.', 'error');
+                showToast(data.error || 'Failed to extract features.', 'error');
             }
         } catch (e) {
             showToast('Connection error.', 'error');
@@ -123,17 +156,14 @@ function initActionButtons() {
         } catch(e) { showToast('Connection error', 'error'); }
     });
 
-    // Refresh Errors
+    // Refresh buttons
     document.getElementById('btn-refresh-errors').addEventListener('click', fetchErrors);
-    
-    // Refresh Processed Jobs
     if (document.getElementById('btn-refresh-processed')) {
         document.getElementById('btn-refresh-processed').addEventListener('click', fetchProcessedJobs);
     }
 }
 
-// --- API Fetches & Renders ---
-
+// ==================== Scraper Status ====================
 async function fetchScrapeStatus() {
     try {
         const res = await fetch(`${API_BASE}/scrape/status`);
@@ -155,7 +185,7 @@ function pollScrapeStatus() {
 function updateScrapeStatusUI(data) {
     const statusEl = document.getElementById('sys-status');
     const pillText = document.getElementById('global-status-text');
-    const pillInd = document.querySelector('.status-indicator');
+    const pillInd = document.querySelector('#global-status-pill .status-indicator');
 
     document.getElementById('sys-mode').innerText = data.mode || '--';
     document.getElementById('sys-started').innerText = data.started_at ? new Date(data.started_at).toLocaleString() : '--';
@@ -182,40 +212,166 @@ function updateScrapeStatusUI(data) {
     }
 }
 
+// ==================== Extractor Status ====================
+async function fetchExtractorStatus() {
+    try {
+        const res = await fetch(`${API_BASE}/regex-extract/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        updateExtractorStatusUI(data);
+    } catch (e) {
+        // Silently fail - endpoint may not exist
+    }
+}
+
+function pollExtractorStatus() {
+    if (extractorPollTimeout) clearTimeout(extractorPollTimeout);
+    fetchExtractorStatus();
+    extractorPollTimeout = setTimeout(pollExtractorStatus, 5000);
+}
+
+function updateExtractorStatusUI(data) {
+    const pillText = document.getElementById('extractor-status-text');
+    const pillInd = document.getElementById('extractor-indicator');
+    const extStatus = document.getElementById('ext-status');
+    const extStarted = document.getElementById('ext-started');
+    const extFinished = document.getElementById('ext-finished');
+
+    if (data.running) {
+        pillText.innerText = 'Extracting...';
+        pillInd.className = 'status-indicator running';
+        if (extStatus) { extStatus.innerText = 'RUNNING'; extStatus.className = 'badge success'; }
+        if (extStarted) extStarted.innerText = data.started_at ? new Date(data.started_at).toLocaleString() : '--';
+        if (extFinished) extFinished.innerText = 'In Progress...';
+    } else {
+        if (data.error) {
+            pillText.innerText = 'Extractor Error';
+            pillInd.className = 'status-indicator error';
+            if (extStatus) { extStatus.innerText = 'ERROR'; extStatus.className = 'badge danger'; }
+        } else {
+            pillText.innerText = 'Extractor Idle';
+            pillInd.className = 'status-indicator';
+            if (extStatus) { extStatus.innerText = 'IDLE'; extStatus.className = 'badge neutral'; }
+        }
+        if (extStarted) extStarted.innerText = data.started_at ? new Date(data.started_at).toLocaleString() : '--';
+        if (extFinished) extFinished.innerText = data.finished_at ? new Date(data.finished_at).toLocaleString() : '--';
+    }
+}
+
+// ==================== Dashboard Metrics ====================
 async function fetchDashboardMetrics() {
     try {
-        const [statsRes, errorsRes] = await Promise.all([
+        const [statsRes, errorsRes, avgRes, salaryRes, techRes, locRes] = await Promise.all([
             fetch(`${API_BASE}/stats`),
-            fetch(`${API_BASE}/errors?limit=50`)
+            fetch(`${API_BASE}/errors?limit=50`),
+            fetch(`${API_BASE}/features/average-job-post-daily`),
+            fetch(`${API_BASE}/features/average-salary`),
+            fetch(`${API_BASE}/features/top-5-technologies`),
+            fetch(`${API_BASE}/features/top-5-locations`)
         ]);
 
         const stats = await statsRes.json();
         const errors = await errorsRes.json();
+        const avgDaily = await avgRes.json();
+        const avgSalary = await salaryRes.json();
+        const technologies = await techRes.json();
+        const locations = await locRes.json();
 
         document.getElementById('metric-jobs-count').innerText = stats.total_jobs || 0;
         document.getElementById('metric-processed-count').innerText = stats.total_processed || 0;
         document.getElementById('metric-terms-count').innerText = stats.total_terms || 0;
         document.getElementById('metric-errors-count').innerText = stats.total_errors || 0;
-
-        renderErrorChart(errors);
+        
+        // Display average formatted to 2 decimals
+        const avgVal = parseFloat(avgDaily);
+        document.getElementById('metric-avg-daily').innerText = isNaN(avgVal) ? '0.00' : avgVal.toFixed(2);
+        
+        // Display average salary
+        const salaryVal = parseFloat(avgSalary);
+        document.getElementById('metric-avg-salary').innerText = isNaN(salaryVal) ? 'N/A' : `R$${salaryVal.toFixed(0)}`;
+        
+        // Display Top 5 Technologies
+        const techList = document.getElementById('top-technologies-list');
+        if (technologies.length === 0) {
+            techList.innerHTML = '<div class="text-center text-muted">No data available</div>';
+        } else {
+            techList.innerHTML = technologies.map(tech => `
+                <div class="list-item">
+                    <span class="list-item-name">${escapeHTML(tech.name)}</span>
+                    <span class="list-item-count">${tech.count}</span>
+                </div>
+            `).join('');
+        }
+        
+        // Display Top 5 Locations
+        const locList = document.getElementById('top-locations-list');
+        if (locations.length === 0) {
+            locList.innerHTML = '<div class="text-center text-muted">No data available</div>';
+        } else {
+            locList.innerHTML = locations.map(loc => `
+                <div class="list-item">
+                    <span class="list-item-name">${escapeHTML(loc.name)}</span>
+                    <span class="list-item-count">${loc.count}</span>
+                </div>
+            `).join('');
+        }
 
     } catch (e) {
         console.error('Metrics fetch error', e);
     }
 }
 
+
+// ==================== Job Posts (with client-side pagination, search, sort, filter) ====================
+let jobsCurrentPage = 1;
+
 async function fetchJobs() {
     try {
-        const res = await fetch(`${API_BASE}/job-posts?limit=100`);
-        const jobs = await res.json();
-        const tbody = document.querySelector('#jobs-table tbody');
-        
-        if (!jobs || jobs.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No jobs found.</td></tr>';
-            return;
-        }
+        const res = await fetch(`${API_BASE}/job-posts?limit=500`);
+        cachedJobs = await res.json();
+        jobsCurrentPage = 1;
+        renderJobsTable();
+    } catch (e) {
+        showToast('Failed to load jobs', 'error');
+    }
+}
 
-        tbody.innerHTML = jobs.map(j => `
+function renderJobsTable() {
+    const tbody = document.querySelector('#jobs-table tbody');
+    const search = (document.getElementById('jobs-search').value || '').toLowerCase();
+    const workplaceFilter = document.getElementById('jobs-filter-workplace').value.toLowerCase();
+    const sortKey = document.getElementById('jobs-sort').value;
+    const pageSize = parseInt(document.getElementById('jobs-page-size').value);
+
+    // Filter
+    let filtered = cachedJobs.filter(j => {
+        const matchSearch = !search || 
+            (j.name || '').toLowerCase().includes(search) ||
+            (j.career_page_name || '').toLowerCase().includes(search) ||
+            (j.city || '').toLowerCase().includes(search) ||
+            (j.state || '').toLowerCase().includes(search);
+        const matchWorkplace = !workplaceFilter || (j.workplace_type || '').toLowerCase().includes(workplaceFilter);
+        return matchSearch && matchWorkplace;
+    });
+
+    // Sort
+    filtered = sortArray(filtered, sortKey, {
+        'date-desc': (a, b) => new Date(b.published_date || 0) - new Date(a.published_date || 0),
+        'date-asc': (a, b) => new Date(a.published_date || 0) - new Date(b.published_date || 0),
+        'name-asc': (a, b) => (a.name || '').localeCompare(b.name || ''),
+        'name-desc': (a, b) => (b.name || '').localeCompare(a.name || ''),
+    });
+
+    // Paginate
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (jobsCurrentPage > totalPages) jobsCurrentPage = totalPages;
+    const start = (jobsCurrentPage - 1) * pageSize;
+    const paged = filtered.slice(start, start + pageSize);
+
+    if (paged.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No jobs found.</td></tr>';
+    } else {
+        tbody.innerHTML = paged.map(j => `
             <tr>
                 <td class="text-muted">#${j.id}</td>
                 <td><strong>${escapeHTML(j.name)}</strong></td>
@@ -223,15 +379,79 @@ async function fetchJobs() {
                 <td>${escapeHTML(j.city || '')} / ${escapeHTML(j.state || '')}</td>
                 <td>${escapeHTML(j.workplace_type || '')}</td>
                 <td>${j.published_date ? new Date(j.published_date).toLocaleDateString() : 'N/A'}</td>
-                <td><span class="badge neutral">${escapeHTML(j.career_page_url ? new URL(j.career_page_url).hostname : 'Direct')}</span></td>
+                <td><span class="badge neutral">${escapeHTML(j.career_page_url ? safeHostname(j.career_page_url) : 'Direct')}</span></td>
                 <td><button class="btn small outline" onclick="openJobModal(${j.id})">Details</button></td>
             </tr>
         `).join('');
+    }
+
+    renderPagination('jobs-pagination', jobsCurrentPage, totalPages, filtered.length, (p) => { jobsCurrentPage = p; renderJobsTable(); });
+}
+
+// ==================== Processed Jobs (with client-side pagination, search, sort) ====================
+let pjCurrentPage = 1;
+
+async function fetchProcessedJobs() {
+    try {
+        const res = await fetch(`${API_BASE}/jobs?limit=500`);
+        cachedProcessedJobs = await res.json();
+        pjCurrentPage = 1;
+        renderProcessedJobsTable();
     } catch (e) {
-        showToast('Failed to load jobs', 'error');
+        showToast('Failed to load structured jobs', 'error');
     }
 }
 
+function renderProcessedJobsTable() {
+    const tbody = document.querySelector('#processed-jobs-table tbody');
+    const search = (document.getElementById('pj-search').value || '').toLowerCase();
+    const sortKey = document.getElementById('pj-sort').value;
+    const pageSize = parseInt(document.getElementById('pj-page-size').value);
+
+    // Filter
+    let filtered = cachedProcessedJobs.filter(j => {
+        return !search || 
+            (j.job_title || '').toLowerCase().includes(search) ||
+            (j.company || '').toLowerCase().includes(search) ||
+            (j.city || '').toLowerCase().includes(search) ||
+            (j.state || '').toLowerCase().includes(search);
+    });
+
+    // Sort
+    filtered = sortArray(filtered, sortKey, {
+        'id-desc': (a, b) => b.id - a.id,
+        'id-asc': (a, b) => a.id - b.id,
+        'title-asc': (a, b) => (a.job_title || '').localeCompare(b.job_title || ''),
+        'title-desc': (a, b) => (b.job_title || '').localeCompare(a.job_title || ''),
+        'salary-desc': (a, b) => (b.salary || 0) - (a.salary || 0),
+        'salary-asc': (a, b) => (a.salary || 0) - (b.salary || 0),
+    });
+
+    // Paginate
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (pjCurrentPage > totalPages) pjCurrentPage = totalPages;
+    const start = (pjCurrentPage - 1) * pageSize;
+    const paged = filtered.slice(start, start + pageSize);
+
+    if (paged.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No structured jobs found.</td></tr>';
+    } else {
+        tbody.innerHTML = paged.map(j => `
+            <tr>
+                <td class="text-muted">#${j.id}</td>
+                <td><strong>${escapeHTML(j.job_title)}</strong></td>
+                <td>${escapeHTML(j.company || 'N/A')}</td>
+                <td>${escapeHTML(j.city || '')} ${escapeHTML(j.state || '')}</td>
+                <td><span class="badge success">${j.salary ? 'R$' + j.salary.toLocaleString() : 'N/A'}</span></td>
+                <td><button class="btn small outline" onclick="openProcessedModal(${j.id})">Inspect</button></td>
+            </tr>
+        `).join('');
+    }
+
+    renderPagination('pj-pagination', pjCurrentPage, totalPages, filtered.length, (p) => { pjCurrentPage = p; renderProcessedJobsTable(); });
+}
+
+// ==================== Search Terms ====================
 async function fetchSearchTerms() {
     try {
         const res = await fetch(`${API_BASE}/search-terms`);
@@ -274,7 +494,7 @@ window.toggleTerm = async (id, isActive) => {
         fetchDashboardMetrics();
     } catch(e) {
         showToast('Update failed', 'error');
-        fetchSearchTerms(); // revert row
+        fetchSearchTerms();
     }
 };
 
@@ -290,22 +510,45 @@ window.deleteTerm = async (id) => {
     }
 };
 
-// store global errors to avoid refetching on click
-let lastErrors = [];
+// ==================== Errors (with client-side search, filter, pagination) ====================
+let errorsCurrentPage = 1;
 
 async function fetchErrors() {
     try {
-        const res = await fetch(`${API_BASE}/errors?limit=50`);
-        const errors = await res.json();
-        lastErrors = errors;
-        const tbody = document.querySelector('#errors-table tbody');
-        
-        if (!errors || errors.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">System is healthy. No recent errors.</td></tr>';
-            return;
-        }
+        const res = await fetch(`${API_BASE}/errors?limit=200`);
+        cachedErrors = await res.json();
+        lastErrors = cachedErrors;
+        errorsCurrentPage = 1;
+        renderErrorsTable();
+    } catch (e) {
+        showToast('Failed to load errors', 'error');
+    }
+}
 
-        tbody.innerHTML = errors.map(e => `
+function renderErrorsTable() {
+    const tbody = document.querySelector('#errors-table tbody');
+    const search = (document.getElementById('errors-search').value || '').toLowerCase();
+    const sourceFilter = document.getElementById('errors-filter-source').value;
+    const pageSize = 20;
+
+    let filtered = cachedErrors.filter(e => {
+        const matchSearch = !search || 
+            (e.message || '').toLowerCase().includes(search) ||
+            (e.source || '').toLowerCase().includes(search) ||
+            (e.term || '').toLowerCase().includes(search);
+        const matchSource = !sourceFilter || (e.source || '') === sourceFilter;
+        return matchSearch && matchSource;
+    });
+
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (errorsCurrentPage > totalPages) errorsCurrentPage = totalPages;
+    const start = (errorsCurrentPage - 1) * pageSize;
+    const paged = filtered.slice(start, start + pageSize);
+
+    if (paged.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">System is healthy. No recent errors.</td></tr>';
+    } else {
+        tbody.innerHTML = paged.map(e => `
             <tr>
                 <td class="text-muted">${new Date(e.created_at).toLocaleString()}</td>
                 <td><span class="badge ${e.source === 'scraper' ? 'neutral' : 'warning'}">${escapeHTML(e.source || 'System')}</span></td>
@@ -313,38 +556,12 @@ async function fetchErrors() {
                 <td><button class="btn small outline" onclick="openErrorModal(${e.id})">Inspect</button></td>
             </tr>
         `).join('');
-    } catch (e) {
-        showToast('Failed to load errors', 'error');
     }
+
+    renderPagination('errors-pagination', errorsCurrentPage, totalPages, filtered.length, (p) => { errorsCurrentPage = p; renderErrorsTable(); });
 }
 
-async function fetchProcessedJobs() {
-    try {
-        const res = await fetch(`${API_BASE}/jobs?limit=100`);
-        const jobs = await res.json();
-        const tbody = document.querySelector('#processed-jobs-table tbody');
-        
-        if (!jobs || jobs.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No structured jobs found.</td></tr>';
-            return;
-        }
-
-        tbody.innerHTML = jobs.map(j => `
-            <tr>
-                <td class="text-muted">#${j.id}</td>
-                <td><strong>${escapeHTML(j.job_title)}</strong></td>
-                <td>${escapeHTML(j.company || 'N/A')}</td>
-                <td>${escapeHTML(j.city || '')} ${escapeHTML(j.state || '')}</td>
-                <td><span class="badge success">${j.salary ? '$' + j.salary : 'N/A'}</span></td>
-                <td><button class="btn small outline" onclick="openProcessedModal(${j.id})">Inspect</button></td>
-            </tr>
-        `).join('');
-    } catch (e) {
-        showToast('Failed to load structured jobs', 'error');
-    }
-}
-
-// --- Modals Logic ---
+// ==================== Modals ====================
 async function openJobModal(id) {
     try {
         const res = await fetch(`${API_BASE}/job-posts/${id}`);
@@ -425,7 +642,7 @@ async function openProcessedModal(id) {
         document.getElementById('pj-company').innerText = pj.company || 'Unknown Company';
         document.getElementById('pj-location').innerText = `${pj.city || ''} ${pj.state || ''}`.trim() || 'Location TBD';
         document.getElementById('pj-contract').innerText = pj.contract_type || 'Full Time';
-        document.getElementById('pj-salary').innerText = pj.salary ? `$${pj.salary}` : 'Salary Undisclosed';
+        document.getElementById('pj-salary').innerText = pj.salary ? `R$${pj.salary.toLocaleString()}` : 'Salary Undisclosed';
         
         const formatPills = (arr) => {
             if (!arr || arr.length === 0) return '<span class="text-muted">None</span>';
@@ -456,59 +673,76 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
     });
 });
 
-function renderErrorChart(errors) {
-    const ctx = document.getElementById('errorChart');
-    if (errorChartInstance) errorChartInstance.destroy();
-    
-    if (errors.length === 0) {
-        // Show empty state chart
-        errorChartInstance = new Chart(ctx, {
-            type: 'bar',
-            data: { labels: ['No Errors'], datasets: [{ data: [0] }] },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
-        });
+// ==================== Pagination Renderer ====================
+function renderPagination(containerId, currentPage, totalPages, totalItems, onPageChange) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (totalPages <= 1) {
+        container.innerHTML = `<span class="page-info">${totalItems} item${totalItems !== 1 ? 's' : ''}</span>`;
         return;
     }
 
-    // Group by date
-    const countsByDate = {};
-    errors.forEach(e => {
-        const d = new Date(e.created_at).toLocaleDateString();
-        countsByDate[d] = (countsByDate[d] || 0) + 1;
-    });
+    let html = '';
 
-    const labels = Object.keys(countsByDate).reverse().slice(-7); // Last 7 days with errors
-    const data = labels.map(l => countsByDate[l]);
+    // Prev button
+    html += `<button class="page-btn" ${currentPage === 1 ? 'disabled' : ''} data-page="${currentPage - 1}"><i class='bx bx-chevron-left'></i></button>`;
 
-    errorChartInstance = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Error Count',
-                data: data,
-                borderColor: '#ef4444',
-                backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                borderWidth: 2,
-                tension: 0.4,
-                fill: true,
-                pointBackgroundColor: '#ef4444',
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-                y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { stepSize: 1 } },
-                x: { grid: { display: false } }
-            }
+    // Page numbers with smart ellipsis
+    const pages = getPageRange(currentPage, totalPages);
+    let lastPage = 0;
+    for (const p of pages) {
+        if (p - lastPage > 1) {
+            html += `<span class="page-info" style="margin: 0 2px;">…</span>`;
         }
+        html += `<button class="page-btn ${p === currentPage ? 'active' : ''}" data-page="${p}">${p}</button>`;
+        lastPage = p;
+    }
+
+    // Next button
+    html += `<button class="page-btn" ${currentPage === totalPages ? 'disabled' : ''} data-page="${currentPage + 1}"><i class='bx bx-chevron-right'></i></button>`;
+
+    // Info
+    html += `<span class="page-info">${totalItems} items</span>`;
+
+    container.innerHTML = html;
+
+    // Bind click events
+    container.querySelectorAll('.page-btn:not(:disabled)').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const page = parseInt(btn.dataset.page);
+            if (page >= 1 && page <= totalPages) onPageChange(page);
+        });
     });
 }
 
+function getPageRange(current, total) {
+    const range = [];
+    if (total <= 7) {
+        for (let i = 1; i <= total; i++) range.push(i);
+    } else {
+        range.push(1);
+        let start = Math.max(2, current - 1);
+        let end = Math.min(total - 1, current + 1);
+        if (current <= 3) { start = 2; end = 5; }
+        if (current >= total - 2) { start = total - 4; end = total - 1; }
+        for (let i = start; i <= end; i++) range.push(i);
+        range.push(total);
+    }
+    return [...new Set(range)].sort((a, b) => a - b);
+}
 
-// --- Utilities ---
+// ==================== Utilities ====================
+function sortArray(arr, key, sorters) {
+    const fn = sorters[key];
+    if (fn) return [...arr].sort(fn);
+    return arr;
+}
+
+function safeHostname(url) {
+    try { return new URL(url).hostname; } catch { return 'Direct'; }
+}
+
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');

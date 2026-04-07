@@ -3,7 +3,7 @@ from database import SessionLocal
 from entities.search_term import SearchTerm
 
 def get_search_terms():
-    stm = select(SearchTerm).where(SearchTerm.is_active.is_(True))
+    stm = select(SearchTerm)
     terms = SessionLocal().scalars(stm).all()
     return terms
 

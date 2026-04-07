@@ -34,10 +34,10 @@ def log_error(
     finally:
         db.close()
 
-def get_errors(limit: int = 50):
+def get_errors():
     db = SessionLocal()
     try:
-        rows = db.scalars(select(ErrorLog).order_by(desc(ErrorLog.created_at)).limit(limit)).all()
+        rows = db.scalars(select(ErrorLog).order_by(desc(ErrorLog.created_at))).all()
         return [_serialize_error(row) for row in rows]
     finally:
         db.close()

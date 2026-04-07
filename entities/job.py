@@ -26,25 +26,28 @@ class Job(Base):
     state_id: Mapped[int | None] = mapped_column(ForeignKey("states.id"), nullable=True)
     city_id: Mapped[int | None] = mapped_column(ForeignKey("cities.id"), nullable=True)
 
-    company = relationship("Company", back_populates="jobs")
-    contract_type = relationship("ContractType", back_populates="jobs")
-    state = relationship("State", back_populates="jobs")
-    city = relationship("City", back_populates="jobs")
+    company = relationship("Company", back_populates="jobs", lazy="joined")
+    contract_type = relationship("ContractType", back_populates="jobs", lazy="joined")
+    state = relationship("State", back_populates="jobs", lazy="joined")
+    city = relationship("City", back_populates="jobs", lazy="joined")
 
     hard_skills = relationship(
         "HardSkill",
         secondary=job_hard_skills,
         back_populates="jobs",
+        lazy="subquery",
     )
     soft_skills = relationship(
         "SoftSkill",
         secondary=job_soft_skills,
         back_populates="jobs",
+        lazy="subquery",
     )
     nice_to_have_skills = relationship(
         "NiceToHaveSkill",
         secondary=job_nice_to_have_skills,
         back_populates="jobs",
+        lazy="subquery",
     )
 
     def to_dict(self):
