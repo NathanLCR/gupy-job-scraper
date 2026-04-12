@@ -16,6 +16,8 @@ class Job(Base):
     job_title: Mapped[str] = mapped_column(String(255), nullable=False)
     extractor_type: Mapped[str] = mapped_column(String(50), nullable=False)
     salary: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    seniority: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    years_experience: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tech_stack: Mapped[list[str]] = mapped_column(JSON, default=list)
 
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -56,6 +58,8 @@ class Job(Base):
             "job_title": self.job_title,
             "extractor_type": self.extractor_type,
             "salary": self.salary,
+            "seniority": self.seniority,
+            "years_experience": self.years_experience,
             "tech_stack": self.tech_stack,
             "company_id": self.company_id,
             "contract_type_id": self.contract_type_id,

@@ -124,6 +124,8 @@ def regex_extractor():
                     job_title=(job.name or "Vaga sem título")[:255],
                     extractor_type="regex",
                     salary=salary_val,
+                    seniority=features.get("seniority"),
+                    years_experience=features.get("years_experience"),
                     tech_stack=features.get("tech_stack") or [],
                     company_id=company.id,
                     contract_type_id=contract_obj.id if contract_obj else None,

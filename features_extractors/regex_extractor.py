@@ -62,6 +62,13 @@ RE_CONTRACT = re.compile(
     r'(?=\s*[;\n\d]|\s{2,}|\s+[A-ZÁÉÍÓÚ]{2}|$)'
 )
 
+RE_SENIORITY = re.compile(
+    r'\b('
+    r'Estagi[áa]r?io|J[úu]nior|Jr\.?|Pleno|Pl\.?|S[êe]nior|Sr\.?|Especialista|Consultor|Lideran[çc]a|Gerente|Diretor'
+    r')\b',
+    re.I,
+)
+
 RE_HARD = re.compile(
     r'(?<!\w)'
     r'('
@@ -276,6 +283,21 @@ def extract(raw: str) -> dict:
     salary = RE_SALARY.findall(text) or None
     contract = [c.strip() for c in RE_CONTRACT.findall(text)] or ["CLT"]
 
+    # Seniority extraction
+    seniority_matches = RE_SENIORITY.findall(text)
+    seniority = None
+    if seniority_matches:
+        # Normalize common abbreviations
+        mapping = {
+            "jr": "Júnior", "jr.": "Júnior", "júnior": "Júnior", "junior": "Júnior",
+            "pl": "Pleno", "pl.": "Pleno", "pleno": "Pleno",
+            "sr": "Sênior", "sr.": "Sênior", "sênior": "Sênior", "senior": "Sênior",
+            "estagiário": "Estagiário", "estagiario": "Estagiário", "estag": "Estagiário",
+            "especialista": "Especialista"
+        }
+        main_match = seniority_matches[0].lower()
+        seniority = mapping.get(main_match, main_match.capitalize())
+
     stacks = detect_stacks(hard_skills + nice_skills, raw_text=text)
     combined_stacks = list(set(stacks["detected"] + stacks["partial"] + stacks["mentioned"]))
 
@@ -292,6 +314,7 @@ def extract(raw: str) -> dict:
         "soft_skills":      soft_skills,
         "nice_to_have":     nice_skills,
         "years_experience": years_experience,
+        "seniority":        seniority,
         "salary":           salary,
         "contract_type":    contract,
         "tech_stack":       combined_stacks,
