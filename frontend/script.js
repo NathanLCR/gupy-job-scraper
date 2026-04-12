@@ -255,6 +255,34 @@ function updateExtractorStatusUI(data) {
     }
 }
 
+function renderBarChart(containerId, items, emptyMessage, colorClass = 'primary') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!Array.isArray(items) || items.length === 0) {
+        container.innerHTML = `<div class="text-center text-muted">${emptyMessage}</div>`;
+        return;
+    }
+
+    const maxValue = Math.max(...items.map(item => item.count || 0), 1);
+    container.innerHTML = items.map(item => {
+        const name = escapeHTML(item.name || 'Other');
+        const count = item.count || 0;
+        const width = Math.max(8, Math.round((count / maxValue) * 100));
+        return `
+            <div class="chart-row">
+                <div class="chart-meta">
+                    <span class="chart-label">${name}</span>
+                    <span class="chart-value">${count}</span>
+                </div>
+                <div class="chart-track">
+                    <div class="chart-fill ${colorClass}" style="width:${width}%"></div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
 // ==================== Dashboard Metrics ====================
 async function fetchDashboardMetrics() {
     try {
@@ -296,57 +324,10 @@ async function fetchDashboardMetrics() {
         const salaryVal = parseFloat(avgSalary);
         updateEl('metric-avg-salary', isNaN(salaryVal) ? 'N/A' : `R$${salaryVal.toFixed(0)}`);
         
-        // Display Top 10 Technologies
-        const techList = document.getElementById('top-technologies-list');
-        if (technologies.length === 0) {
-            techList.innerHTML = '<div class="text-center text-muted">No data available</div>';
-        } else {
-            techList.innerHTML = technologies.map(tech => `
-                <div class="list-item">
-                    <span class="list-item-name">${escapeHTML(tech.name)}</span>
-                    <span class="list-item-count">${tech.count}</span>
-                </div>
-            `).join('');
-        }
-        
-        // Display Top 10 Locations
-        const locList = document.getElementById('top-locations-list');
-        if (locations.length === 0) {
-            locList.innerHTML = '<div class="text-center text-muted">No data available</div>';
-        } else {
-            locList.innerHTML = locations.map(loc => `
-                <div class="list-item">
-                    <span class="list-item-name">${escapeHTML(loc.name)}</span>
-                    <span class="list-item-count">${loc.count}</span>
-                </div>
-            `).join('');
-        }
-
-        // Display Jobs by Contract Type
-        const contractList = document.getElementById('top-contracts-list');
-        if (contracts.length === 0) {
-            contractList.innerHTML = '<div class="text-center text-muted">No data available</div>';
-        } else {
-            contractList.innerHTML = contracts.map(contract => `
-                <div class="list-item">
-                    <span class="list-item-name">${escapeHTML(contract.name)}</span>
-                    <span class="list-item-count">${contract.count}</span>
-                </div>
-            `).join('');
-        }
-
-        // Display Jobs by Seniority
-        const seniorityList = document.getElementById('top-seniority-list');
-        if (seniority.length === 0) {
-            seniorityList.innerHTML = '<div class="text-center text-muted">No data available</div>';
-        } else {
-            seniorityList.innerHTML = seniority.map(s => `
-                <div class="list-item">
-                    <span class="list-item-name">${escapeHTML(s.name || 'Other')}</span>
-                    <span class="list-item-count">${s.count}</span>
-                </div>
-            `).join('');
-        }
+        renderBarChart('top-technologies-list', technologies, 'No data available', 'primary');
+        renderBarChart('top-locations-list', locations, 'No data available', 'info');
+        renderBarChart('top-contracts-list', contracts, 'No data available', 'warning');
+        renderBarChart('top-seniority-list', seniority, 'No data available', 'success');
 
     } catch (e) {
         console.error('Metrics fetch error', e);
