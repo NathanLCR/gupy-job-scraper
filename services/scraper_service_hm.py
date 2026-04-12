@@ -84,23 +84,22 @@ def start_scrape():
                 response = fetch_gupy_page(term_str, current_page)
                 if response is None:
                     continue
-                inserted += save_new_job_post(response['data'], last_scraped)
-                if check_if_all_save(inserted):
-                    print(f"Inserted: {inserted} for {term_str}")
-                    continue
+                saved, reached_old = save_new_job_post(response['data'], last_scraped)
+                inserted += saved
 
-                max_pages = math.ceil(response['pagination']['total'] / LIMIT)
-                for current_page in range(2, max_pages + 1):
-                    sleep(randint(5, 20))
-                    response = fetch_gupy_page(term_str, current_page)
-                    if response is None:
-                        break
-                    saved = save_new_job_post(response['data'], last_scraped)
-                    inserted += saved
-                    if check_if_all_save(saved):
-                        print(f"Inserted: {inserted} for {term_str}")
-                        break
+                if not reached_old:
+                    max_pages = math.ceil(response['pagination']['total'] / LIMIT)
+                    for current_page in range(2, max_pages + 1):
+                        sleep(randint(5, 20))
+                        response = fetch_gupy_page(term_str, current_page)
+                        if response is None:
+                            break
+                        saved, reached_old = save_new_job_post(response['data'], last_scraped)
+                        inserted += saved
+                        if reached_old:
+                            break
                 
+                print(f"Inserted: {inserted} for {term_str}")
                 update_last_scraped_at(search_term.id)
             except Exception as exc:
                 scrape_status["error"] = str(exc)
@@ -125,8 +124,3 @@ def start_scrape_thread():
     thread = Thread(target=start_scrape, daemon=True)
     thread.start()
         
-def check_if_all_save(inserted, limit=LIMIT):
-    return inserted < limit
-
-if __name__ == "__main__":
-    start_scrape()

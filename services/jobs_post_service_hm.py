@@ -9,13 +9,15 @@ from utils import parse_datetime, parse_date
 def save_new_job_post(jobs, last_scraped_at=None):
     db = SessionLocal()
     inserted = 0
+    reached_old = False
     try:
         for job_post in jobs:
             job_post_obj = create_job_post(job_post)
 
             if last_scraped_at and job_post_obj.published_date and job_post_obj.published_date <= last_scraped_at.replace(tzinfo=None):
                 db.commit()
-                return inserted
+                reached_old = True
+                return inserted, reached_old
 
             existing_job = db.get(JobPost, job_post['id'])
             if existing_job:
@@ -32,7 +34,7 @@ def save_new_job_post(jobs, last_scraped_at=None):
         )
     finally:
         db.close()
-    return inserted
+    return inserted, reached_old
 
 def create_job_post(jobs_raw):
     return JobPost(
