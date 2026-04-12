@@ -5,7 +5,7 @@ from datetime import datetime, UTC
 
 def get_search_terms():
     db = SessionLocal()
-    stm = select(SearchTerm)
+    stm = select(SearchTerm).where(SearchTerm.is_active)
     terms = db.scalars(stm).all()
     db.close()
     return terms

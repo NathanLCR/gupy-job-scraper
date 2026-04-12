@@ -50,8 +50,11 @@ def jobs_posts():
 
 @app.get("/job-posts/<id>")
 def job_post(id):
-    job_post = get_job_post(id)
-    return jsonify(job_post.to_dict()), 200
+    try:
+        job_post = get_job_post(id)
+        return jsonify(job_post.to_dict()), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
 
 @app.get("/jobs")
 def jobs():
@@ -60,8 +63,11 @@ def jobs():
 
 @app.get("/jobs/<id>")
 def job(id):
-    job = get_job(id)
-    return jsonify(job.to_dict()), 200
+    try:
+        job = get_job(id)
+        return jsonify(job.to_dict()), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
 
 @app.get("/search-terms")
 def search_terms():
@@ -76,8 +82,11 @@ def create_search_term_route():
 
 @app.put("/search-terms/<id>")
 def deactive_search_term(id):
+    try:
         term = remove_search_term(id)
         return jsonify({"message": f"Search term {term.to_dict()} has been deactivated"}), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
 
 @app.post("/regex-extract")
 def extract():
@@ -93,13 +102,13 @@ def extract_status():
 def average_job_post_daily():
     return jsonify(get_average_job_post_daily()), 200
 
-@app.get("/features/top-5-technologies")
-def top_5_technologies():
+@app.get("/features/top-technologies")
+def top_technologies():
     technologies = get_top_technologies()
     return jsonify(technologies), 200
 
-@app.get("/features/top-5-locations")
-def top_5_locations():
+@app.get("/features/top-locations")
+def top_locations():
     locations = get_top_locations()
     return jsonify(locations), 200
 
