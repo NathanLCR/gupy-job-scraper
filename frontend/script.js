@@ -263,8 +263,8 @@ async function fetchDashboardMetrics() {
             fetch(`${API_BASE}/errors?limit=50`),
             fetch(`${API_BASE}/features/average-job-post-daily`),
             fetch(`${API_BASE}/features/average-salary`),
-            fetch(`${API_BASE}/features/top-5-technologies`),
-            fetch(`${API_BASE}/features/top-5-locations`),
+            fetch(`${API_BASE}/features/top-technologies`),
+            fetch(`${API_BASE}/features/top-locations`),
             fetch(`${API_BASE}/features/jobs-by-contract-type`)
         ]);
 
@@ -276,25 +276,32 @@ async function fetchDashboardMetrics() {
         const locations = await locRes.json();
         const contracts = await contractRes.json();
 
-        document.getElementById('metric-jobs-count').innerText = stats.total_jobs || 0;
-        document.getElementById('metric-processed-count').innerText = stats.total_processed || 0;
-        document.getElementById('metric-terms-count').innerText = stats.total_terms || 0;
-        document.getElementById('metric-errors-count').innerText = stats.total_errors || 0;
+        const updateEl = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.innerText = val;
+        };
+
+        updateEl('metric-jobs-count', stats.total_jobs || 0);
+        updateEl('metric-processed-count', stats.total_processed || 0);
+        updateEl('metric-terms-count', stats.total_terms || 0);
+        updateEl('metric-errors-count', stats.total_errors || 0);
         
         // Display average formatted to 2 decimals
         const avgVal = parseFloat(avgDaily);
-        document.getElementById('metric-avg-daily').innerText = isNaN(avgVal) ? '0.00' : avgVal.toFixed(2);
+        updateEl('metric-avg-daily', isNaN(avgVal) ? '0.00' : avgVal.toFixed(2));
         
         // Display average salary
         const salaryVal = parseFloat(avgSalary);
-        document.getElementById('metric-avg-salary').innerText = isNaN(salaryVal) ? 'N/A' : `R$${salaryVal.toFixed(0)}`;
+        updateEl('metric-avg-salary', isNaN(salaryVal) ? 'N/A' : `R$${salaryVal.toFixed(0)}`);
         
         // Display Top 5 Technologies
         const techList = document.getElementById('top-technologies-list');
         if (technologies.length === 0) {
             techList.innerHTML = '<div class="text-center text-muted">No data available</div>';
         } else {
-            techList.innerHTML = technologies.map(tech => `
+            // Limit to Top 10 as per UI labels
+            const top10Tech = technologies.slice(0, 10);
+            techList.innerHTML = top10Tech.map(tech => `
                 <div class="list-item">
                     <span class="list-item-name">${escapeHTML(tech.name)}</span>
                     <span class="list-item-count">${tech.count}</span>
@@ -307,7 +314,9 @@ async function fetchDashboardMetrics() {
         if (locations.length === 0) {
             locList.innerHTML = '<div class="text-center text-muted">No data available</div>';
         } else {
-            locList.innerHTML = locations.map(loc => `
+            // Limit to Top 10 as per UI labels
+            const top10Loc = locations.slice(0, 10);
+            locList.innerHTML = top10Loc.map(loc => `
                 <div class="list-item">
                     <span class="list-item-name">${escapeHTML(loc.name)}</span>
                     <span class="list-item-count">${loc.count}</span>
