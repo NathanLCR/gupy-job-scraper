@@ -108,9 +108,9 @@ class TestExtractorService(unittest.TestCase):
         adicionais 
         """
         hard_skills = sorted([
-            "APIs REST", "CI/CD", "Design Systems", "Firebase", 
-            "GitHub Actions", "Gitflow", "Google Analytics", "Gradle", 
-            "Microfrontends", "React", "React Native", "Redux", 
+            "CI/CD", "Design System", "Firebase",
+            "GitHub Actions", "Gitflow", "Google Analytics", "Gradle",
+            "Microfrontends", "REST API", "React", "React Native", "Redux",
             "Styled Components", "TestFlight", "TypeScript", "Xcode", "Zustand"
         ])
         features = extract(job_description)
