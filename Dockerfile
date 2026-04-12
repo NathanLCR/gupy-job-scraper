@@ -15,6 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN chmod +x /app/docker/entrypoint.sh
+
 EXPOSE 8080
 
-CMD ["python", "app.py"]
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "app:app"]
