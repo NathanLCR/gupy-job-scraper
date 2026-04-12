@@ -3,7 +3,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
 
-revision = "0008_seed_additional_search_terms"
+revision = "0008_seed_search_terms"
 down_revision = "0007_add_seniority_to_jobs"
 branch_labels = None
 depends_on = None

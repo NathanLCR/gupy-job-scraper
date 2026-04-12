@@ -2,8 +2,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0009_add_last_scrape_page_to_search_terms"
-down_revision = "0008_seed_additional_search_terms"
+revision = "0009_add_last_scrape_page"
+down_revision = "0008_seed_search_terms"
 branch_labels = None
 depends_on = None
 
