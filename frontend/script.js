@@ -486,7 +486,7 @@ function renderProcessedJobsTable() {
 // ==================== Search Terms ====================
 async function fetchSearchTerms() {
     try {
-        const res = await fetch(`${API_BASE}/search-terms`);
+        const res = await fetch(`${API_BASE}/search-terms?include_inactive=true`);
         const terms = await res.json();
         const tbody = document.querySelector('#terms-table tbody');
         
@@ -517,12 +517,14 @@ async function fetchSearchTerms() {
 
 window.toggleTerm = async (id, isActive) => {
     try {
-        await fetch(`${API_BASE}/search-terms/${id}`, {
+        const res = await fetch(`${API_BASE}/search-terms/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_active: isActive })
         });
-        showToast('Term updated', 'success');
+        if (!res.ok) throw new Error('Update failed');
+        showToast(`Term ${isActive ? 'activated' : 'deactivated'}`, 'success');
+        fetchSearchTerms();
         fetchDashboardMetrics();
     } catch(e) {
         showToast('Update failed', 'error');
@@ -533,7 +535,8 @@ window.toggleTerm = async (id, isActive) => {
 window.deleteTerm = async (id) => {
     if (!confirm('Are you sure you want to delete this term?')) return;
     try {
-        await fetch(`${API_BASE}/search-terms/${id}`, { method: 'DELETE' });
+        const res = await fetch(`${API_BASE}/search-terms/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
         showToast('Term deleted', 'success');
         fetchSearchTerms();
         fetchDashboardMetrics();

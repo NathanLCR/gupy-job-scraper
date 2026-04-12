@@ -5,7 +5,12 @@
 from flasgger import Swagger
 from flask import Flask, Response, send_from_directory, jsonify, redirect, request
 from database import init_db
-from services.search_terms_service_hm import get_search_terms, add_search_term, remove_search_term
+from services.search_terms_service_hm import (
+    get_search_terms,
+    add_search_term,
+    remove_search_term,
+    update_search_term,
+)
 from services.extractor_service import start_extractor_thread, get_extractor_status
 from services.scraper_service_hm import start_scrape_thread, get_scrape_status
 from services.error_service import get_errors
@@ -237,7 +242,8 @@ def search_terms() -> tuple:
       200:
         description: Array of search term objects
     """
-    terms = get_search_terms()
+    include_inactive = request.args.get("include_inactive", "").lower() in {"1", "true", "yes"}
+    terms = get_search_terms(include_inactive=include_inactive)
     return jsonify([term.to_dict() for term in terms]), 200
 
 @app.post("/search-terms")
@@ -283,8 +289,37 @@ def deactive_search_term(id) -> tuple:
       200:
         description: Term deactivated
     """
-    term = remove_search_term(id)
-    return jsonify({"message": f"Search term {term.to_dict()} has been deactivated"}), 200
+    payload = request.get_json(silent=True) or {}
+    if "is_active" not in payload:
+        return jsonify({"error": "is_active is required"}), 400
+    try:
+        term = update_search_term(id, is_active=bool(payload["is_active"]))
+        return jsonify(term.to_dict()), 200
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+@app.delete("/search-terms/<id>")
+def delete_search_term_route(id) -> tuple:
+    """
+    ---
+    tags:
+      - Search terms
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Term deleted
+      404:
+        description: Not found
+    """
+    try:
+        remove_search_term(id)
+        return jsonify({"message": f"Search term {id} deleted"}), 200
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 404
 
 @app.post("/regex-extract")
 def extract_features() -> tuple:
@@ -323,6 +358,7 @@ def average_job_post_daily() -> tuple:
     """
     return jsonify(get_average_job_post_daily()), 200
 
+@app.get("/features/top-technologies")
 @app.get("/features/top-5-technologies")
 def top_5_technologies() -> tuple:
     """
@@ -335,6 +371,7 @@ def top_5_technologies() -> tuple:
     """
     return jsonify(get_top_technologies()), 200
 
+@app.get("/features/top-locations")
 @app.get("/features/top-5-locations")
 def top_5_locations() -> tuple:
     """

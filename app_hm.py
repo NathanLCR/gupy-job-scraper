@@ -1,4 +1,9 @@
-from services.search_terms_service_hm import get_search_terms, add_search_term, remove_search_term
+from services.search_terms_service_hm import (
+    get_search_terms,
+    add_search_term,
+    remove_search_term,
+    update_search_term,
+)
 from services.extractor_service import start_extractor_thread, get_extractor_status
 from flask import Flask, Response, send_from_directory, jsonify, redirect, request
 from services.scraper_service_hm import start_scrape_thread, get_scrape_status
@@ -71,7 +76,7 @@ def job(id):
 
 @app.get("/search-terms")
 def search_terms():
-    terms = get_search_terms()
+    terms = get_search_terms(include_inactive=include_inactive)
     return jsonify([term.to_dict() for term in terms]), 200
 
 @app.post("/search-terms")
@@ -83,8 +88,19 @@ def create_search_term_route():
 @app.put("/search-terms/<id>")
 def deactive_search_term(id):
     try:
-        term = remove_search_term(id)
-        return jsonify({"message": f"Search term {term.to_dict()} has been deactivated"}), 200
+        payload = request.get_json(silent=True) or {}
+        if "is_active" not in payload:
+            return jsonify({"error": "is_active is required"}), 400
+        term = update_search_term(id, is_active=bool(payload["is_active"]))
+        return jsonify(term.to_dict()), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+
+@app.delete("/search-terms/<id>")
+def delete_search_term_route(id):
+    try:
+        remove_search_term(id)
+        return jsonify({"message": f"Search term {id} deleted"}), 200
     except ValueError as e:
         return jsonify({"error": str(e)}), 404
 
@@ -103,11 +119,13 @@ def average_job_post_daily():
     return jsonify(get_average_job_post_daily()), 200
 
 @app.get("/features/top-technologies")
+@app.get("/features/top-5-technologies")
 def top_technologies():
     technologies = get_top_technologies()
     return jsonify(technologies), 200
 
 @app.get("/features/top-locations")
+@app.get("/features/top-5-locations")
 def top_locations():
     locations = get_top_locations()
     return jsonify(locations), 200

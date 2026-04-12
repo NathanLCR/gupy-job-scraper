@@ -8,12 +8,12 @@ from sqlalchemy import engine_from_config, pool
 # Ensure project root is importable when Alembic runs from migrations/.
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from database import DATABASE_URL
+from database import get_database_url
 from entities import Base
 
 
 config = context.config
-config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
+config.set_main_option("sqlalchemy.url", get_database_url().replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
