@@ -1,72 +1,23 @@
-from services.extractor_service import regex_extractor
-import csv
-from datetime import UTC, datetime
-from io import StringIO
-from threading import Lock, Thread
+# Student: Created the original Flask app with Swagger documentation and inline DB queries.
+# AI:      Refactored to use the modular service layer (matching app_hm.py), while
+#          preserving the Swagger annotations for API documentation.
+
 from flasgger import Swagger
-from flask import Flask, Response, jsonify, redirect, request, send_from_directory
-from sqlalchemy import desc, select, func
-from database import SessionLocal, init_db
-from entities import ErrorLog, JobPost, SearchTerm, Job
-from services.scraper_service import populate_database, start_scrape
+from flask import Flask, Response, send_from_directory, jsonify, redirect, request
+from database import init_db
+from services.search_terms_service_hm import get_search_terms, add_search_term, remove_search_term
+from services.extractor_service import start_extractor_thread, get_extractor_status
+from services.scraper_service_hm import start_scrape_thread, get_scrape_status
+from services.error_service import get_errors
+from services.job_service_hm import get_jobs, get_job
+from services.stats_service import get_stats
+from services.jobs_post_service_hm import get_jobs_posts, get_job_post
+from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type
+from services.csv_service import export_job_posts_csv, export_jobs_csv
 from swagger_config import SWAGGER_CONFIG, SWAGGER_TEMPLATE
-from utils import (
-    JOB_POSTS_CSV_HEADERS,
-    _get_pagination_limit,
-    _get_pagination_offset,
-    _job_post_to_csv_row,
-    _parse_bool,
-    _serialize_error,
-    _serialize_job_post,
-    _serialize_search_term,
-    _serialize_job,
-)
 
 app = Flask(__name__)
 Swagger(app, template=SWAGGER_TEMPLATE, config=SWAGGER_CONFIG)
-
-_scrape_lock = Lock()
-_scrape_status = {
-    "running": False,
-    "mode": None,
-    "started_at": None,
-    "finished_at": None,
-    "error": None,
-}
-
-def build_job_posts_csv() -> tuple[bytes, str]:
-    db = SessionLocal()
-    try:
-        rows = db.scalars(select(JobPost).order_by(desc(JobPost.published_date))).all()
-        buffer = StringIO()
-        writer = csv.writer(buffer)
-        writer.writerow(JOB_POSTS_CSV_HEADERS)
-        for row in rows:
-            writer.writerow(_job_post_to_csv_row(row))
-        data = buffer.getvalue().encode("utf-8-sig")
-        filename = f"job_posts_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
-        return data, filename
-    finally:
-        db.close()
-
-def _run_scraper(mode: str) -> None:
-    with _scrape_lock:
-        _scrape_status["running"] = True
-        _scrape_status["mode"] = mode
-        _scrape_status["started_at"] = datetime.now(UTC).isoformat()
-        _scrape_status["finished_at"] = None
-        _scrape_status["error"] = None
-
-    try:
-        if mode == "populate":
-            populate_database()
-        else:
-            start_scrape()
-    except Exception as exc:
-        _scrape_status["error"] = str(exc)
-    finally:
-        _scrape_status["running"] = False
-        _scrape_status["finished_at"] = datetime.now(UTC).isoformat()
 
 @app.route("/")
 def index():
@@ -119,54 +70,22 @@ def initialize_database() -> tuple:
     responses:
       200:
         description: Tables created or already present
-        schema:
-          type: object
-          properties:
-            message:
-              type: string
-              example: Database initialized
     """
     init_db()
     return jsonify({"message": "Database initialized"}), 200
 
 @app.post("/scrape/start")
-def start_scrape_endpoint() -> tuple:
+def start_scrape() -> tuple:
     """
     ---
     tags:
       - Scraper
-    parameters:
-      - name: mode
-        in: query
-        type: string
-        enum: [incremental, populate]
-        default: incremental
-        description: incremental = new jobs only; populate = full historical load
     responses:
       202:
         description: Scrape job accepted
-        schema:
-          type: object
-          properties:
-            message:
-              type: string
-            mode:
-              type: string
-      400:
-        description: Invalid mode
-      409:
-        description: A scrape is already running
     """
-    mode = request.args.get("mode", "incremental").strip().lower()
-    if mode not in {"incremental", "populate"}:
-        return jsonify({"error": "Invalid mode. Use 'incremental' or 'populate'."}), 400
-
-    if _scrape_status["running"]:
-        return jsonify({"error": "A scrape job is already running."}), 409
-
-    thread = Thread(target=_run_scraper, args=(mode,), daemon=True)
-    thread.start()
-    return jsonify({"message": "Scrape started", "mode": mode}), 202
+    start_scrape_thread()
+    return jsonify({"message": "Scrape started", "mode": "incremental"}), 202
 
 @app.get("/scrape/status")
 def scrape_status() -> tuple:
@@ -177,166 +96,23 @@ def scrape_status() -> tuple:
     responses:
       200:
         description: Status payload
-        schema:
-          type: object
-          properties:
-            running:
-              type: boolean
-            mode:
-              type: string
-              nullable: true
-            started_at:
-              type: string
-              nullable: true
-            finished_at:
-              type: string
-              nullable: true
-            error:
-              type: string
-              nullable: true
     """
-    return jsonify(_scrape_status), 200
+    return jsonify(get_scrape_status()), 200
 
 @app.get("/errors")
-def get_errors() -> tuple:
+def errors() -> tuple:
     """
     ---
     tags:
       - Errors
-    parameters:
-      - name: limit
-        in: query
-        type: integer
-        default: 100
-        description: Max rows (1–500)
     responses:
       200:
         description: Array of error log objects
     """
-    limit = _get_pagination_limit()
-    db = SessionLocal()
-    try:
-        rows = db.scalars(select(ErrorLog).order_by(desc(ErrorLog.created_at)).limit(limit)).all()
-        return jsonify([_serialize_error(row) for row in rows]), 200
-    finally:
-        db.close()
-
-@app.get("/job-posts")
-def get_job_posts() -> tuple:
-    """
-    ---
-    tags:
-      - Job posts
-    parameters:
-      - name: limit
-        in: query
-        type: integer
-        default: 100
-        description: Page size (1–500)
-      - name: offset
-        in: query
-        type: integer
-        default: 0
-        description: Rows to skip
-    responses:
-      200:
-        description: Array of job post objects
-    """
-    limit = _get_pagination_limit()
-    offset = _get_pagination_offset()
-    db = SessionLocal()
-    try:
-        rows = db.scalars(
-            select(JobPost).order_by(desc(JobPost.published_date)).limit(limit).offset(offset)
-        ).all()
-        return jsonify([row.to_dict() for row in rows]), 200
-    finally:
-        db.close()
-
-@app.get("/job-posts/<int:job_id>")
-def get_job_post(job_id: int) -> tuple:
-    """
-    ---
-    tags:
-      - Job posts
-    parameters:
-      - name: job_id
-        in: path
-        type: integer
-        required: true
-    responses:
-      200:
-        description: Job object with full features
-      404:
-        description: Not found
-    """
-    db = SessionLocal()
-    try:
-        row = db.get(JobPost, job_id)
-        if row is None:
-            return jsonify({"error": "Job not found."}), 404
-        return jsonify(_serialize_job_post(row)), 200
-    finally:
-        db.close()
-
-@app.get("/jobs")
-def get_jobs_list() -> tuple:
-    """
-    ---
-    tags:
-      - Jobs
-    parameters:
-      - name: limit
-        in: query
-        type: integer
-        default: 100
-      - name: offset
-        in: query
-        type: integer
-        default: 0
-    responses:
-      200:
-        description: Array of processed job objects
-    """
-    limit = _get_pagination_limit()
-    offset = _get_pagination_offset()
-    db = SessionLocal()
-    try:
-        rows = db.scalars(
-            select(Job).order_by(desc(Job.id)).limit(limit).offset(offset)
-        ).all()
-        return jsonify([_serialize_job(row) for row in rows]), 200
-    finally:
-        db.close()
-
-@app.get("/jobs/<int:job_id>")
-def get_job_structured(job_id: int) -> tuple:
-    """
-    ---
-    tags:
-      - Jobs
-    parameters:
-      - name: job_id
-        in: path
-        type: integer
-        required: true
-    responses:
-      200:
-        description: Job object with full relational structures
-      404:
-        description: Not found
-    """
-    db = SessionLocal()
-    try:
-        row = db.get(Job, job_id)
-        if row is None:
-            return jsonify({"error": "Job not found."}), 404
-        return jsonify(_serialize_job(row)), 200
-    finally:
-        db.close()
+    return jsonify(get_errors()), 200
 
 @app.get("/stats")
-def get_stats() -> tuple:
+def stats() -> tuple:
     """
     ---
     tags:
@@ -345,23 +121,46 @@ def get_stats() -> tuple:
       200:
         description: Metric counts
     """
-    db = SessionLocal()
+    return jsonify(get_stats()), 200
+
+@app.get("/job-posts")
+def jobs_posts() -> tuple:
+    """
+    ---
+    tags:
+      - Job posts
+    responses:
+      200:
+        description: Array of job post objects
+    """
+    job_posts = get_jobs_posts()
+    return jsonify([job_post.to_dict() for job_post in job_posts]), 200
+
+@app.get("/job-posts/<id>")
+def job_post(id) -> tuple:
+    """
+    ---
+    tags:
+      - Job posts
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Single job post object
+      404:
+        description: Not found
+    """
     try:
-        jobs_count = db.scalar(select(func.count(JobPost.id))) or 0
-        processed_jobs_count = db.scalar(select(func.count(Job.id))) or 0
-        terms_count = db.scalar(select(func.count(SearchTerm.id))) or 0
-        errors_count = db.scalar(select(func.count(ErrorLog.id))) or 0
-        return jsonify({
-            "total_jobs": jobs_count,
-            "total_processed": processed_jobs_count,
-            "total_terms": terms_count,
-            "total_errors": errors_count
-        }), 200
-    finally:
-        db.close()
+        post = get_job_post(id)
+        return jsonify(post.to_dict()), 200
+    except ValueError:
+        return jsonify({"error": "Job post not found"}), 404
 
 @app.get("/job-posts/export")
-def export_job_posts_csv() -> tuple:
+def export_job_posts() -> tuple:
     """
     ---
     tags:
@@ -370,23 +169,66 @@ def export_job_posts_csv() -> tuple:
       - text/csv
     responses:
       200:
-        description: CSV attachment with every row from jobs_posts
+        description: CSV with all raw job posts
     """
-    data, filename = build_job_posts_csv()
-    return (
-        Response(
-            data,
-            mimetype="text/csv; charset=utf-8",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Cache-Control": "no-store",
-            },
-        ),
-        200,
-    )
+    csv_data = export_job_posts_csv()
+    return Response(csv_data.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=job_posts.csv"})
+
+@app.get("/jobs")
+def jobs() -> tuple:
+    """
+    ---
+    tags:
+      - Jobs
+    responses:
+      200:
+        description: Array of processed job objects
+    """
+    jobs_list = get_jobs()
+    return jsonify([job.to_dict() for job in jobs_list]), 200
+
+@app.get("/jobs/<id>")
+def job(id) -> tuple:
+    """
+    ---
+    tags:
+      - Jobs
+    parameters:
+      - name: id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Single processed job object
+      404:
+        description: Not found
+    """
+    try:
+        job_obj = get_job(id)
+        return jsonify(job_obj.to_dict()), 200
+    except ValueError:
+        return jsonify({"error": "Job not found"}), 404
+
+@app.get("/jobs/export")
+def export_jobs() -> tuple:
+    """
+    ---
+    tags:
+      - Jobs
+    produces:
+      - text/csv
+    responses:
+      200:
+        description: CSV with all processed jobs
+    """
+    csv_data = export_jobs_csv()
+    return Response(csv_data.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=jobs.csv"})
 
 @app.get("/search-terms")
-def get_search_terms() -> tuple:
+def search_terms() -> tuple:
     """
     ---
     tags:
@@ -395,15 +237,11 @@ def get_search_terms() -> tuple:
       200:
         description: Array of search term objects
     """
-    db = SessionLocal()
-    try:
-        rows = db.scalars(select(SearchTerm).order_by(SearchTerm.id)).all()
-        return jsonify([_serialize_search_term(row) for row in rows]), 200
-    finally:
-        db.close()
+    terms = get_search_terms()
+    return jsonify([term.to_dict() for term in terms]), 200
 
 @app.post("/search-terms")
-def create_search_term() -> tuple:
+def create_search_term_route() -> tuple:
     """
     ---
     tags:
@@ -425,126 +263,113 @@ def create_search_term() -> tuple:
     responses:
       201:
         description: Created
-      400:
-        description: Validation error
-      409:
-        description: Duplicate term
     """
-    payload = request.get_json(silent=True) or {}
-    term = (payload.get("term") or "").strip()
-    is_active = _parse_bool(payload.get("is_active"), default=True)
-    if not term:
-        return jsonify({"error": "Field 'term' is required."}), 400
+    term_str = request.json["term"]
+    new_term = add_search_term(term_str)
+    return jsonify(new_term.to_dict()), 201
 
-    db = SessionLocal()
-    try:
-        existing = db.scalar(select(SearchTerm).where(SearchTerm.term == term))
-        if existing:
-            return jsonify({"error": "Search term already exists."}), 409
-
-        row = SearchTerm(term=term, is_active=is_active)
-        db.add(row)
-        db.commit()
-        db.refresh(row)
-        return jsonify(_serialize_search_term(row)), 201
-    finally:
-        db.close()
-
-@app.put("/search-terms/<int:term_id>")
-def update_search_term(term_id: int) -> tuple:
+@app.put("/search-terms/<id>")
+def deactive_search_term(id) -> tuple:
     """
     ---
     tags:
       - Search terms
     parameters:
-      - name: term_id
-        in: path
-        type: integer
-        required: true
-      - name: body
-        in: body
-        schema:
-          type: object
-          properties:
-            term:
-              type: string
-            is_active:
-              type: boolean
-    responses:
-      200:
-        description: Updated
-      404:
-        description: Not found
-      409:
-        description: Duplicate term
-    """
-    payload = request.get_json(silent=True) or {}
-    db = SessionLocal()
-    try:
-        row = db.get(SearchTerm, term_id)
-        if row is None:
-            return jsonify({"error": "Search term not found."}), 404
-
-        if "term" in payload:
-            new_term = (payload.get("term") or "").strip()
-            if not new_term:
-                return jsonify({"error": "Field 'term' cannot be empty."}), 400
-            duplicate = db.scalar(
-                select(SearchTerm).where(SearchTerm.term == new_term, SearchTerm.id != term_id)
-            )
-            if duplicate:
-                return jsonify({"error": "Search term already exists."}), 409
-            row.term = new_term
-
-        if "is_active" in payload:
-            row.is_active = _parse_bool(payload["is_active"], default=row.is_active)
-
-        db.commit()
-        db.refresh(row)
-        return jsonify(_serialize_search_term(row)), 200
-    finally:
-        db.close()
-
-@app.delete("/search-terms/<int:term_id>")
-def delete_search_term(term_id: int) -> tuple:
-    """
-    ---
-    tags:
-      - Search terms
-    parameters:
-      - name: term_id
+      - name: id
         in: path
         type: integer
         required: true
     responses:
       200:
-        description: Deleted
-      404:
-        description: Not found
+        description: Term deactivated
     """
-    db = SessionLocal()
-    try:
-        row = db.get(SearchTerm, term_id)
-        if row is None:
-            return jsonify({"error": "Search term not found."}), 404
-        db.delete(row)
-        db.commit()
-        return jsonify({"message": "Search term deleted."}), 200
-    finally:
-        db.close()
+    term = remove_search_term(id)
+    return jsonify({"message": f"Search term {term.to_dict()} has been deactivated"}), 200
 
 @app.post("/regex-extract")
-def extract_endpoint():
+def extract_features() -> tuple:
+    """
+    ---
+    tags:
+      - Extractor
+    responses:
+      202:
+        description: Feature extraction started in background
+    """
+    start_extractor_thread()
+    return jsonify({"message": "Features extraction started"}), 202
+
+@app.get("/regex-extract/status")
+def extract_status() -> tuple:
     """
     ---
     tags:
       - Extractor
     responses:
       200:
-        description: Features extracted
+        description: Extractor status
     """
-    regex_extractor()
-    return jsonify({"message": "Features extracted."}), 200
+    return jsonify(get_extractor_status()), 200
+
+@app.get("/features/average-job-post-daily")
+def average_job_post_daily() -> tuple:
+    """
+    ---
+    tags:
+      - Features
+    responses:
+      200:
+        description: Average daily job posts count
+    """
+    return jsonify(get_average_job_post_daily()), 200
+
+@app.get("/features/top-5-technologies")
+def top_5_technologies() -> tuple:
+    """
+    ---
+    tags:
+      - Features
+    responses:
+      200:
+        description: Top technologies by job count
+    """
+    return jsonify(get_top_technologies()), 200
+
+@app.get("/features/top-5-locations")
+def top_5_locations() -> tuple:
+    """
+    ---
+    tags:
+      - Features
+    responses:
+      200:
+        description: Top locations by job count
+    """
+    return jsonify(get_top_locations()), 200
+
+@app.get("/features/average-salary")
+def average_salary() -> tuple:
+    """
+    ---
+    tags:
+      - Features
+    responses:
+      200:
+        description: Average salary across all jobs
+    """
+    return jsonify(get_average_salary()), 200
+
+@app.get("/features/jobs-by-contract-type")
+def jobs_by_contract_type() -> tuple:
+    """
+    ---
+    tags:
+      - Features
+    responses:
+      200:
+        description: Job count grouped by contract type
+    """
+    return jsonify(get_jobs_by_contract_type()), 200
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)

@@ -81,12 +81,12 @@ function debounce(fn, ms) {
 
 // ==================== Action Buttons ====================
 function initActionButtons() {
-    const triggerScrape = async (mode) => {
+    const triggerScrape = async () => {
         try {
-            const res = await fetch(`${API_BASE}/scrape/start?mode=${mode}`, { method: 'POST' });
+            const res = await fetch(`${API_BASE}/scrape/start`, { method: 'POST' });
             const data = await res.json();
             if (res.ok || res.status === 202) {
-                showToast(`Started ${mode} scrape successfully!`, 'success');
+                showToast(`Started scrape successfully!`, 'success');
                 fetchScrapeStatus();
             } else {
                 showToast(data.error || 'Failed to start scrape.', 'error');
@@ -96,9 +96,7 @@ function initActionButtons() {
         }
     };
 
-    document.getElementById('btn-scrape-incremental').addEventListener('click', () => triggerScrape('incremental'));
-    document.getElementById('dash-btn-scrape').addEventListener('click', () => triggerScrape('incremental'));
-    document.getElementById('dash-btn-populate').addEventListener('click', () => triggerScrape('populate'));
+    document.getElementById('dash-btn-scrape').addEventListener('click', () => triggerScrape());
     
     // Extractor
     document.getElementById('btn-extract').addEventListener('click', async () => {
@@ -187,13 +185,12 @@ function updateScrapeStatusUI(data) {
     const pillText = document.getElementById('global-status-text');
     const pillInd = document.querySelector('#global-status-pill .status-indicator');
 
-    document.getElementById('sys-mode').innerText = data.mode || '--';
     document.getElementById('sys-started').innerText = data.started_at ? new Date(data.started_at).toLocaleString() : '--';
     
     if (data.running) {
         statusEl.innerText = 'RUNNING';
         statusEl.className = 'badge success';
-        pillText.innerText = `Scraping (${data.mode})...`;
+        pillText.innerText = `Scraping...`;
         pillInd.className = 'status-indicator running';
         document.getElementById('sys-finished').innerText = 'In Progress...';
     } else {

@@ -81,7 +81,7 @@
             <div class="views-container">
                 <!-- Dashboard View -->
                 <section id="dashboard-view" class="view active">
-                    <div class="metrics-grid" style="grid-template-columns: repeat(6, 1fr);">
+                    <div class="metrics-grid" style="grid-template-columns: repeat(5, 1fr);">
                         <div class="metric-card glass">
                             <div class="metric-icon"><i class='bx bx-briefcase'></i></div>
                             <div class="metric-info">
@@ -117,13 +117,6 @@
                                 <h2 id="metric-terms-count">--</h2>
                             </div>
                         </div>
-                        <div class="metric-card glass">
-                            <div class="metric-icon error"><i class='bx bx-error-circle'></i></div>
-                            <div class="metric-info">
-                                <h3>System Errors</h3>
-                                <h2 id="metric-errors-count">--</h2>
-                            </div>
-                        </div>
                     </div>
 
                     <div class="panels-grid" style="grid-template-columns: repeat(4, 1fr);">
@@ -136,10 +129,6 @@
                                     <div class="status-row">
                                         <span>Status:</span>
                                         <span id="sys-status" class="badge neutral">Connecting...</span>
-                                    </div>
-                                    <div class="status-row">
-                                        <span>Last Run Mode:</span>
-                                        <span id="sys-mode">--</span>
                                     </div>
                                     <div class="status-row">
                                         <span>Started At:</span>
@@ -166,8 +155,11 @@
                                     </div>
                                 </div>
                                 <div class="action-buttons mt-4">
-                                    <button class="btn primary full-width" id="dash-btn-scrape">Run Incremental Scrape</button>
-                                    <button class="btn warning full-width mt-2" id="dash-btn-populate">Run Full Populate</button>
+                                    <button class="btn primary full-width" id="dash-btn-scrape">Run Scrape</button>
+                                </div>
+                                <div class="action-buttons mt-2" style="display: flex; gap: 8px;">
+                                    <button class="btn outline full-width" id="dash-btn-export-posts" onclick="window.location.href='/job-posts/export'"><i class='bx bx-export'></i> Raw Posts CSV</button>
+                                    <button class="btn outline full-width" id="dash-btn-export-jobs" onclick="window.location.href='/jobs/export'"><i class='bx bx-export'></i> Jobs CSV</button>
                                 </div>
                             </div>
                         </div>

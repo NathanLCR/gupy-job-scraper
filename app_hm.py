@@ -1,12 +1,13 @@
 from services.search_terms_service_hm import get_search_terms, add_search_term, remove_search_term
-from services.extractor_service import regex_extractor, start_extractor_thread, get_extractor_status
-from flask import Flask, send_from_directory, jsonify, redirect
+from services.extractor_service import start_extractor_thread, get_extractor_status
+from flask import Flask, Response, send_from_directory, jsonify, redirect, request
 from services.scraper_service_hm import start_scrape_thread, get_scrape_status
 from services.error_service import get_errors
 from services.job_service_hm import get_jobs, get_job
 from services.stats_service import get_stats
 from services.jobs_post_service_hm import get_jobs_posts, get_job_post
 from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type
+from services.csv_service import export_job_posts_csv, export_jobs_csv
 app = Flask(__name__)
 
 @app.route("/")
@@ -68,15 +69,15 @@ def search_terms():
     return jsonify([term.to_dict() for term in terms]), 200
 
 @app.post("/search-terms")
-def add_search_term():
-    term = request.json["term"]
-    term = add_search_term(term)
-    return jsonify({"message": term.to_dict()}), 200
+def create_search_term_route():
+    term_str = request.json["term"]
+    new_term = add_search_term(term_str)
+    return jsonify(new_term.to_dict()), 201
 
 @app.put("/search-terms/<id>")
 def deactive_search_term(id):
-    term = remove_search_term(id)
-    return jsonify({"message": f"Search term {term.to_dict()} has been deactivated"}), 200
+        term = remove_search_term(id)
+        return jsonify({"message": f"Search term {term.to_dict()} has been deactivated"}), 200
 
 @app.post("/regex-extract")
 def extract():
@@ -109,6 +110,18 @@ def average_salary():
 @app.get("/features/jobs-by-contract-type")
 def jobs_by_contract_type():
     return jsonify(get_jobs_by_contract_type()), 200
+
+@app.get("/job-posts/export")
+def export_job_posts():
+    csv_data = export_job_posts_csv()
+    return Response(csv_data.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=job_posts.csv"})
+
+@app.get("/jobs/export")
+def export_jobs():
+    csv_data = export_jobs_csv()
+    return Response(csv_data.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=jobs.csv"})
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)
