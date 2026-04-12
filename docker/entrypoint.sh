@@ -1,16 +1,27 @@
 #!/bin/sh
 set -eu
 
-echo "Waiting for PostgreSQL at ${DB_HOST:-db}:${DB_PORT:-5432}..."
-
 python -c "
 import os
 import socket
 import time
 import sys
+from urllib.parse import urlparse
 
-host = os.getenv('DB_HOST', 'db')
-port = int(os.getenv('DB_PORT', '5432'))
+database_url = os.getenv('DATABASE_URL')
+if database_url:
+    parsed = urlparse(database_url)
+    host = parsed.hostname
+    port = parsed.port or 5432
+else:
+    host = os.getenv('DB_HOST')
+    port = int(os.getenv('DB_PORT', '5432'))
+
+if not host:
+    print('Database host is not configured. Set DATABASE_URL or DB_HOST.', file=sys.stderr)
+    sys.exit(1)
+
+print(f'Waiting for PostgreSQL at {host}:{port}...')
 deadline = time.time() + 90
 
 while time.time() < deadline:

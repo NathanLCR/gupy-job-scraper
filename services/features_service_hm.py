@@ -59,3 +59,15 @@ def get_jobs_by_contract_type():
     result = db.execute(query).all()
     db.close()
     return [{"name": row[0], "count": row[1]} for row in result]
+
+def get_jobs_by_seniority():
+    db = SessionLocal()
+    query = (
+        select(Job.seniority, func.count(Job.id).label("count"))
+        .filter(Job.seniority != None)
+        .group_by(Job.seniority)
+        .order_by(func.count(Job.id).desc())
+    )
+    result = db.execute(query).all()
+    db.close()
+    return [{"name": row[0], "count": row[1]} for row in result]
