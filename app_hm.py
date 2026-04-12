@@ -6,7 +6,7 @@ from services.error_service import get_errors
 from services.job_service_hm import get_jobs, get_job
 from services.stats_service import get_stats
 from services.jobs_post_service_hm import get_jobs_posts, get_job_post
-from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type
+from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type, get_jobs_by_seniority
 from services.csv_service import export_job_posts_csv, export_jobs_csv
 app = Flask(__name__)
 
@@ -119,6 +119,10 @@ def average_salary():
 @app.get("/features/jobs-by-contract-type")
 def jobs_by_contract_type():
     return jsonify(get_jobs_by_contract_type()), 200
+
+@app.get("/features/jobs-by-seniority")
+def jobs_by_seniority():
+    return jsonify(get_jobs_by_seniority()), 200
 
 @app.get("/job-posts/export")
 def export_job_posts():

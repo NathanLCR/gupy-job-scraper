@@ -258,14 +258,15 @@ function updateExtractorStatusUI(data) {
 // ==================== Dashboard Metrics ====================
 async function fetchDashboardMetrics() {
     try {
-        const [statsRes, errorsRes, avgRes, salaryRes, techRes, locRes, contractRes] = await Promise.all([
+        const [statsRes, errorsRes, avgRes, salaryRes, techRes, locRes, contractRes, seniorityRes] = await Promise.all([
             fetch(`${API_BASE}/stats`),
             fetch(`${API_BASE}/errors?limit=50`),
             fetch(`${API_BASE}/features/average-job-post-daily`),
             fetch(`${API_BASE}/features/average-salary`),
             fetch(`${API_BASE}/features/top-technologies`),
             fetch(`${API_BASE}/features/top-locations`),
-            fetch(`${API_BASE}/features/jobs-by-contract-type`)
+            fetch(`${API_BASE}/features/jobs-by-contract-type`),
+            fetch(`${API_BASE}/features/jobs-by-seniority`)
         ]);
 
         const stats = await statsRes.json();
@@ -275,6 +276,7 @@ async function fetchDashboardMetrics() {
         const technologies = await techRes.json();
         const locations = await locRes.json();
         const contracts = await contractRes.json();
+        const seniority = await seniorityRes.json();
 
         const updateEl = (id, val) => {
             const el = document.getElementById(id);
@@ -294,14 +296,12 @@ async function fetchDashboardMetrics() {
         const salaryVal = parseFloat(avgSalary);
         updateEl('metric-avg-salary', isNaN(salaryVal) ? 'N/A' : `R$${salaryVal.toFixed(0)}`);
         
-        // Display Top 5 Technologies
+        // Display Top 10 Technologies
         const techList = document.getElementById('top-technologies-list');
         if (technologies.length === 0) {
             techList.innerHTML = '<div class="text-center text-muted">No data available</div>';
         } else {
-            // Limit to Top 10 as per UI labels
-            const top10Tech = technologies.slice(0, 10);
-            techList.innerHTML = top10Tech.map(tech => `
+            techList.innerHTML = technologies.map(tech => `
                 <div class="list-item">
                     <span class="list-item-name">${escapeHTML(tech.name)}</span>
                     <span class="list-item-count">${tech.count}</span>
@@ -309,14 +309,12 @@ async function fetchDashboardMetrics() {
             `).join('');
         }
         
-        // Display Top 5 Locations
+        // Display Top 10 Locations
         const locList = document.getElementById('top-locations-list');
         if (locations.length === 0) {
             locList.innerHTML = '<div class="text-center text-muted">No data available</div>';
         } else {
-            // Limit to Top 10 as per UI labels
-            const top10Loc = locations.slice(0, 10);
-            locList.innerHTML = top10Loc.map(loc => `
+            locList.innerHTML = locations.map(loc => `
                 <div class="list-item">
                     <span class="list-item-name">${escapeHTML(loc.name)}</span>
                     <span class="list-item-count">${loc.count}</span>
@@ -333,6 +331,19 @@ async function fetchDashboardMetrics() {
                 <div class="list-item">
                     <span class="list-item-name">${escapeHTML(contract.name)}</span>
                     <span class="list-item-count">${contract.count}</span>
+                </div>
+            `).join('');
+        }
+
+        // Display Jobs by Seniority
+        const seniorityList = document.getElementById('top-seniority-list');
+        if (seniority.length === 0) {
+            seniorityList.innerHTML = '<div class="text-center text-muted">No data available</div>';
+        } else {
+            seniorityList.innerHTML = seniority.map(s => `
+                <div class="list-item">
+                    <span class="list-item-name">${escapeHTML(s.name || 'Other')}</span>
+                    <span class="list-item-count">${s.count}</span>
                 </div>
             `).join('');
         }
