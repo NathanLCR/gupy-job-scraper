@@ -20,6 +20,7 @@ _SEC_NICE = (
     r'|Habilidades?\s+Desej[áa]veis?'
     r'|Voc[êe]\s+se\s+destacar[áa]\s+se\s+tiver'
     r'|Desej[áa]veis?:?'
+    r'|Desej[áa]vel:?'
     r'|Diferenciais?:?'
     r')'
 )
@@ -56,10 +57,9 @@ RE_SALARY = re.compile(
 )
 
 RE_CONTRACT = re.compile(
-    r'Contrata[çc][aã]o\s*:\s*'
-    r'([A-Za-zÀ-ú /]+?)'
-    r'(?=\s*[;\n\d]|\s{2,}|\s+[A-ZÁÉÍÓÚ]{2}|$)',
-    re.I,
+    r'[Cc]ontrata[çc][ãaAÃ][oO]\s*:\s*'
+    r'([A-Za-zÀ-ú \(\)/]+?)'
+    r'(?=\s*[;\n\d]|\s{2,}|\s+[A-ZÁÉÍÓÚ]{2}|$)'
 )
 
 RE_HARD = re.compile(
@@ -149,7 +149,7 @@ def _clean(text: str) -> str:
     return text.strip()
 
 def _section(text: str, header: str, stop: str | None = None) -> str:
-    end = rf'(?:{stop})' if stop else r'$'
+    end = rf'(?:{stop}|$)' if stop else r'$'
     m = re.search(rf'(?:{header})(.*?)(?:{end})', text, re.S | re.I)
     return m.group(1).strip() if m else ""
 

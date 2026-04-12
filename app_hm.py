@@ -1,12 +1,12 @@
 from services.search_terms_service_hm import get_search_terms, add_search_term, remove_search_term
 from services.extractor_service import regex_extractor, start_extractor_thread, get_extractor_status
-from flask import Flask, send_from_directory, jsonify, redirect, request
+from flask import Flask, send_from_directory, jsonify, redirect
 from services.scraper_service_hm import start_scrape_thread, get_scrape_status
 from services.error_service import get_errors
 from services.job_service_hm import get_jobs, get_job
 from services.stats_service import get_stats
 from services.jobs_post_service_hm import get_jobs_posts, get_job_post
-from services.features_service_hm import get_average_job_post_daily, get_top_5_technologies, get_top_5_locations, get_average_salary
+from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type
 app = Flask(__name__)
 
 @app.route("/")
@@ -94,17 +94,21 @@ def average_job_post_daily():
 
 @app.get("/features/top-5-technologies")
 def top_5_technologies():
-    technologies = get_top_5_technologies()
+    technologies = get_top_technologies()
     return jsonify(technologies), 200
 
 @app.get("/features/top-5-locations")
 def top_5_locations():
-    locations = get_top_5_locations()
+    locations = get_top_locations()
     return jsonify(locations), 200
 
 @app.get("/features/average-salary")
 def average_salary():
     return jsonify(get_average_salary()), 200
+
+@app.get("/features/jobs-by-contract-type")
+def jobs_by_contract_type():
+    return jsonify(get_jobs_by_contract_type()), 200
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)

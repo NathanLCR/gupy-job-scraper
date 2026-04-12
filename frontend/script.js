@@ -261,13 +261,14 @@ function updateExtractorStatusUI(data) {
 // ==================== Dashboard Metrics ====================
 async function fetchDashboardMetrics() {
     try {
-        const [statsRes, errorsRes, avgRes, salaryRes, techRes, locRes] = await Promise.all([
+        const [statsRes, errorsRes, avgRes, salaryRes, techRes, locRes, contractRes] = await Promise.all([
             fetch(`${API_BASE}/stats`),
             fetch(`${API_BASE}/errors?limit=50`),
             fetch(`${API_BASE}/features/average-job-post-daily`),
             fetch(`${API_BASE}/features/average-salary`),
             fetch(`${API_BASE}/features/top-5-technologies`),
-            fetch(`${API_BASE}/features/top-5-locations`)
+            fetch(`${API_BASE}/features/top-5-locations`),
+            fetch(`${API_BASE}/features/jobs-by-contract-type`)
         ]);
 
         const stats = await statsRes.json();
@@ -276,6 +277,7 @@ async function fetchDashboardMetrics() {
         const avgSalary = await salaryRes.json();
         const technologies = await techRes.json();
         const locations = await locRes.json();
+        const contracts = await contractRes.json();
 
         document.getElementById('metric-jobs-count').innerText = stats.total_jobs || 0;
         document.getElementById('metric-processed-count').innerText = stats.total_processed || 0;
@@ -312,6 +314,19 @@ async function fetchDashboardMetrics() {
                 <div class="list-item">
                     <span class="list-item-name">${escapeHTML(loc.name)}</span>
                     <span class="list-item-count">${loc.count}</span>
+                </div>
+            `).join('');
+        }
+
+        // Display Jobs by Contract Type
+        const contractList = document.getElementById('top-contracts-list');
+        if (contracts.length === 0) {
+            contractList.innerHTML = '<div class="text-center text-muted">No data available</div>';
+        } else {
+            contractList.innerHTML = contracts.map(contract => `
+                <div class="list-item">
+                    <span class="list-item-name">${escapeHTML(contract.name)}</span>
+                    <span class="list-item-count">${contract.count}</span>
                 </div>
             `).join('');
         }
