@@ -14,6 +14,7 @@ from entities import (
     State,
 )
 from features_extractors.regex_extractor import extract
+from features_extractors.regex_extractor import normalise_skill_label
 from services.error_service import log_error
 
 def get_or_create(session, model, **kwargs):
@@ -57,6 +58,18 @@ def normalize_contract_type(c_type_str):
     if "estág" in c_lower or "estag" in c_lower:
         return "Estágio"
     return "CLT"
+
+def normalize_skill_names(skills):
+    normalized = []
+    seen = set()
+    for skill in skills or []:
+        label = normalise_skill_label(skill)[:120]
+        key = label.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(label)
+    return normalized
 
 def regex_extractor():
     if extractor_status["running"]:
@@ -106,7 +119,7 @@ def regex_extractor():
                 contract_obj = get_or_create(db, ContractType, name=normalized_c_type)
 
                 hard_kills_list = []
-                for s in (features.get("hard_skills") or []):
+                for s in normalize_skill_names(features.get("hard_skills") or []):
                     hard_kills_list.append(get_or_create(db, HardSkill, name=s[:120]))
                 
                 soft_skills_list = []
@@ -114,7 +127,7 @@ def regex_extractor():
                     soft_skills_list.append(get_or_create(db, SoftSkill, name=s[:120]))
 
                 nice_skills_list = []
-                for s in (features.get("nice_to_have") or []):
+                for s in normalize_skill_names(features.get("nice_to_have") or []):
                     nice_skills_list.append(get_or_create(db, NiceToHaveSkill, name=s[:120]))
 
                 salary_val = parse_salary(features.get("salary"))
