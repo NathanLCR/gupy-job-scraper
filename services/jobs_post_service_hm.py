@@ -1,4 +1,4 @@
-from sqlalchemy import Select
+from sqlalchemy import Select, func, or_
 from entities.job_post import JobPost
 from services.error_service import log_error
 from database import SessionLocal
@@ -58,11 +58,72 @@ def create_job_post(jobs_raw):
         badges=json.dumps(jobs_raw.get("badges"), ensure_ascii=False) if jobs_raw.get("badges") else None
     )
 
-def get_jobs_posts():
+def _build_pagination(total_items: int, page: int, page_size: int) -> dict:
+    total_pages = max(1, (total_items + page_size - 1) // page_size)
+    return {
+        "page": page,
+        "page_size": page_size,
+        "total_items": total_items,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_prev": page > 1,
+    }
+
+
+def get_jobs_posts(
+    *,
+    search: str | None = None,
+    workplace_type: str | None = None,
+    sort: str = "published_date",
+    order: str = "desc",
+    page: int | None = None,
+    page_size: int | None = None,
+    paginated: bool = False,
+):
     db = SessionLocal()
     try:
-        query = Select(JobPost).order_by(JobPost.published_date.desc())
-        return db.scalars(query).all()
+        query = Select(JobPost)
+
+        if search:
+            search_value = f"%{search.strip()}%"
+            query = query.where(
+                or_(
+                    JobPost.name.ilike(search_value),
+                    JobPost.career_page_name.ilike(search_value),
+                    JobPost.city.ilike(search_value),
+                    JobPost.state.ilike(search_value),
+                )
+            )
+
+        if workplace_type:
+            query = query.where(JobPost.workplace_type.ilike(workplace_type.strip()))
+
+        sort_map = {
+            "id": JobPost.id,
+            "name": JobPost.name,
+            "company": JobPost.career_page_name,
+            "published_date": JobPost.published_date,
+            "workplace_type": JobPost.workplace_type,
+        }
+        sort_column = sort_map.get(sort, JobPost.published_date)
+        if order.lower() == "asc":
+            query = query.order_by(sort_column.asc().nullslast(), JobPost.id.asc())
+        else:
+            query = query.order_by(sort_column.desc().nullslast(), JobPost.id.desc())
+
+        if not paginated:
+            return db.scalars(query).all()
+
+        safe_page = max(1, page or 1)
+        safe_page_size = max(1, min(page_size or 20, 100))
+        total_items = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+        items = db.scalars(
+            query.offset((safe_page - 1) * safe_page_size).limit(safe_page_size)
+        ).all()
+        return {
+            "items": [job_post.to_dict() for job_post in items],
+            "pagination": _build_pagination(total_items, safe_page, safe_page_size),
+        }
     except Exception as e:
         log_error(
             source = "jobs_post_service_hm.get_jobs_posts",

@@ -11,13 +11,17 @@ from services.search_terms_service_hm import (
     remove_search_term,
     update_search_term,
 )
-from services.extractor_service import start_extractor_thread, get_extractor_status
+from services.extractor_service import (
+    start_extractor_thread,
+    start_llm_extractor_thread,
+    get_extractor_status,
+)
 from services.scraper_service_hm import start_scrape_thread, get_scrape_status
 from services.error_service import get_errors
 from services.job_service_hm import get_jobs, get_job
 from services.stats_service import get_stats
 from services.jobs_post_service_hm import get_jobs_posts, get_job_post
-from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type, get_jobs_by_seniority
+from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type, get_jobs_by_seniority, get_technology_trends
 from services.csv_service import export_job_posts_csv, export_jobs_csv
 from swagger_config import SWAGGER_CONFIG, SWAGGER_TEMPLATE
 
@@ -346,6 +350,33 @@ def extract_status() -> tuple:
     """
     return jsonify(get_extractor_status()), 200
 
+
+@app.post("/llm-extract")
+def llm_extract_features() -> tuple:
+    """
+    ---
+    tags:
+      - Extractor
+    responses:
+      202:
+        description: LLM feature extraction started in background
+    """
+    start_llm_extractor_thread()
+    return jsonify({"message": "LLM extraction started"}), 202
+
+
+@app.get("/llm-extract/status")
+def llm_extract_status() -> tuple:
+    """
+    ---
+    tags:
+      - Extractor
+    responses:
+      200:
+        description: LLM extractor status
+    """
+    return jsonify(get_extractor_status("llm")), 200
+
 @app.get("/features/average-job-post-daily")
 def average_job_post_daily() -> tuple:
     """
@@ -419,6 +450,32 @@ def jobs_by_seniority() -> tuple:
         description: Job count grouped by seniority
     """
     return jsonify(get_jobs_by_seniority()), 200
+
+@app.get("/features/technology-trends")
+def technology_trends() -> tuple:
+    """
+    ---
+    tags:
+      - Features
+    parameters:
+      - name: days
+        in: query
+        type: integer
+        required: false
+        default: 30
+      - name: limit
+        in: query
+        type: integer
+        required: false
+        default: 5
+    responses:
+      200:
+        description: Time-series counts for the most frequent extracted technologies
+    """
+    days = request.args.get("days", default=30, type=int)
+    limit = request.args.get("limit", default=5, type=int)
+    skill = request.args.get("skill", default="", type=str)
+    return jsonify(get_technology_trends(days=days, limit=limit, skill=skill)), 200
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)

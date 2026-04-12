@@ -207,6 +207,28 @@
                                 </div>
                             </div>
                         </div>
+
+                        <div class="panel glass trend-panel">
+                            <div class="panel-header">
+                                <h2><i class='bx bx-line-chart'></i> Technology Trends (Last 30 Days)</h2>
+                            </div>
+                            <div class="panel-body">
+                                <p class="trend-subtitle">Daily mentions of the top extracted technologies in processed jobs.</p>
+                                <div class="trend-toolbar">
+                                    <div class="search-box trend-search-box">
+                                        <i class='bx bx-search'></i>
+                                        <input type="text" id="trend-skill-search" placeholder="Filter by technology, e.g. Python" class="toolbar-input">
+                                    </div>
+                                    <div class="trend-toolbar-actions">
+                                        <button class="btn outline small" id="trend-search-btn">Search</button>
+                                        <button class="btn outline small" id="trend-clear-btn">Clear</button>
+                                    </div>
+                                </div>
+                                <div id="technology-trends-chart" class="trend-chart-shell">
+                                    <div class="text-center text-muted">Loading trend data...</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                 </section>
@@ -218,13 +240,26 @@
                             <h2><i class='bx bx-check-shield'></i> Structured Database</h2>
                             <button class="btn outline small" id="btn-refresh-processed"><i class='bx bx-refresh'></i> Refresh</button>
                         </div>
-                        <!-- Search & Filter Bar -->
-                        <div class="table-toolbar">
+                        <div class="table-hero">
+                            <div>
+                                <span class="table-kicker">Processed jobs</span>
+                                <p class="table-description">Inspect extracted jobs with live search, smarter filters, and database-backed pagination.</p>
+                            </div>
+                            <div class="table-meta-badges">
+                                <span class="table-badge" id="pj-total-badge">0 results</span>
+                                <span class="table-badge" id="pj-range-badge">Page 1 of 1</span>
+                            </div>
+                        </div>
+                        <div class="table-toolbar elevated">
                             <div class="search-box">
                                 <i class='bx bx-search'></i>
-                                <input type="text" id="pj-search" placeholder="Search by title, company..." class="toolbar-input">
+                                <input type="text" id="pj-search" placeholder="Search by title, company, location..." class="toolbar-input">
                             </div>
                             <div class="toolbar-controls">
+                                <div class="search-box compact-search">
+                                    <i class='bx bx-map'></i>
+                                    <input type="text" id="pj-filter-location" placeholder="Location" class="toolbar-input">
+                                </div>
                                 <select id="pj-sort" class="toolbar-select">
                                     <option value="id-desc">Newest First</option>
                                     <option value="id-asc">Oldest First</option>
@@ -240,6 +275,7 @@
                                 </select>
                             </div>
                         </div>
+                        <div class="table-active-filters" id="pj-active-filters">Showing the latest structured jobs.</div>
                         <div class="table-container">
                             <table class="data-table" id="processed-jobs-table">
                                 <thead>
@@ -269,8 +305,17 @@
                             <h2><i class='bx bx-briefcase-alt-2'></i> Job Postings Database</h2>
                             <button class="btn outline small" id="btn-export-csv"><i class='bx bx-export'></i> Export CSV</button>
                         </div>
-                        <!-- Search & Filter Bar -->
-                        <div class="table-toolbar">
+                        <div class="table-hero">
+                            <div>
+                                <span class="table-kicker">Raw scraped posts</span>
+                                <p class="table-description">Browse the latest imported jobs with responsive filtering and server-driven pages.</p>
+                            </div>
+                            <div class="table-meta-badges">
+                                <span class="table-badge" id="jobs-total-badge">0 results</span>
+                                <span class="table-badge" id="jobs-range-badge">Page 1 of 1</span>
+                            </div>
+                        </div>
+                        <div class="table-toolbar elevated">
                             <div class="search-box">
                                 <i class='bx bx-search'></i>
                                 <input type="text" id="jobs-search" placeholder="Search by title, company, city..." class="toolbar-input">
@@ -295,6 +340,7 @@
                                 </select>
                             </div>
                         </div>
+                        <div class="table-active-filters" id="jobs-active-filters">Showing the most recent scraped posts.</div>
                         <div class="table-container">
                             <table class="data-table" id="jobs-table">
                                 <thead>
@@ -325,6 +371,16 @@
                             <h2><i class='bx bx-search-alt'></i> Manage Search Terms</h2>
                             <button class="btn primary small" id="btn-add-term"><i class='bx bx-plus'></i> Add Term</button>
                         </div>
+                        <div class="table-hero">
+                            <div>
+                                <span class="table-kicker">Scrape inputs</span>
+                                <p class="table-description">Filter, page, and maintain the terms that feed the scraper pipeline.</p>
+                            </div>
+                            <div class="table-meta-badges">
+                                <span class="table-badge" id="terms-total-badge">0 results</span>
+                                <span class="table-badge" id="terms-range-badge">Page 1 of 1</span>
+                            </div>
+                        </div>
                         
                         <!-- Add Term Form (Hidden by default) -->
                         <div id="add-term-form" class="form-container" style="display: none;">
@@ -333,6 +389,25 @@
                             <button class="btn outline" id="btn-cancel-term">Cancel</button>
                         </div>
 
+                        <div class="table-toolbar elevated mt-4">
+                            <div class="search-box">
+                                <i class='bx bx-search'></i>
+                                <input type="text" id="terms-search" placeholder="Find a search term..." class="toolbar-input">
+                            </div>
+                            <div class="toolbar-controls">
+                                <select id="terms-filter-status" class="toolbar-select">
+                                    <option value="all">All Statuses</option>
+                                    <option value="active">Active</option>
+                                    <option value="inactive">Inactive</option>
+                                </select>
+                                <select id="terms-page-size" class="toolbar-select small">
+                                    <option value="10">10</option>
+                                    <option value="20" selected>20</option>
+                                    <option value="50">50</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="table-active-filters" id="terms-active-filters">Showing all configured search terms.</div>
                         <div class="table-container mt-4">
                             <table class="data-table" id="terms-table">
                                 <thead>
@@ -348,6 +423,7 @@
                                 </tbody>
                             </table>
                         </div>
+                        <div class="pagination-bar" id="terms-pagination"></div>
                     </div>
                 </section>
 
@@ -358,8 +434,17 @@
                             <h2><i class='bx bx-bug'></i> System Logs & Errors</h2>
                             <button class="btn outline small" id="btn-refresh-errors"><i class='bx bx-refresh'></i> Refresh</button>
                         </div>
-                        <!-- Search & Filter Bar -->
-                        <div class="table-toolbar">
+                        <div class="table-hero">
+                            <div>
+                                <span class="table-kicker">Operational visibility</span>
+                                <p class="table-description">Scan recent failures by source, message content, and page window without loading the whole log table.</p>
+                            </div>
+                            <div class="table-meta-badges">
+                                <span class="table-badge" id="errors-total-badge">0 results</span>
+                                <span class="table-badge" id="errors-range-badge">Page 1 of 1</span>
+                            </div>
+                        </div>
+                        <div class="table-toolbar elevated">
                             <div class="search-box">
                                 <i class='bx bx-search'></i>
                                 <input type="text" id="errors-search" placeholder="Search errors..." class="toolbar-input">
@@ -369,9 +454,16 @@
                                     <option value="">All Sources</option>
                                     <option value="scraper">Scraper</option>
                                     <option value="regex_extractor">Extractor</option>
+                                    <option value="llm_extractor">LLM Extractor</option>
+                                </select>
+                                <select id="errors-page-size" class="toolbar-select small">
+                                    <option value="10">10</option>
+                                    <option value="20" selected>20</option>
+                                    <option value="50">50</option>
                                 </select>
                             </div>
                         </div>
+                        <div class="table-active-filters" id="errors-active-filters">Showing the newest log entries first.</div>
                         <div class="table-container">
                             <table class="data-table" id="errors-table">
                                 <thead>

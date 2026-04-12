@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, UTC
 from threading import Thread
+
 from database import SessionLocal
 from entities import (
     City,
@@ -13,6 +14,7 @@ from entities import (
     SoftSkill,
     State,
 )
+from features_extractors.llm_extractor import extract as llm_extract
 from features_extractors.regex_extractor import extract
 from features_extractors.regex_extractor import normalise_skill_label
 from services.error_service import log_error
@@ -25,15 +27,23 @@ def get_or_create(session, model, **kwargs):
         session.flush()
     return instance
 
-extractor_status = {
-    "running": False,
-    "started_at": None,
-    "finished_at": None,
-    "error": None,
+def _new_extractor_status():
+    return {
+        "running": False,
+        "started_at": None,
+        "finished_at": None,
+        "error": None,
+    }
+
+
+extractor_statuses = {
+    "regex": _new_extractor_status(),
+    "llm": _new_extractor_status(),
 }
 
-def get_extractor_status():
-    return extractor_status
+
+def get_extractor_status(extractor_type="regex"):
+    return extractor_statuses.get(extractor_type, _new_extractor_status())
 
 def parse_salary(salary_data):
     if not salary_data:
@@ -71,30 +81,34 @@ def normalize_skill_names(skills):
         normalized.append(label)
     return normalized
 
-def regex_extractor():
-    if extractor_status["running"]:
+def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
+    status = extractor_statuses[extractor_type]
+    if status["running"]:
         return
 
-    extractor_status["running"] = True
-    extractor_status["started_at"] = datetime.now(UTC).isoformat()
-    extractor_status["finished_at"] = None
-    extractor_status["error"] = None
+    status["running"] = True
+    status["started_at"] = datetime.now(UTC).isoformat()
+    status["finished_at"] = None
+    status["error"] = None
 
     db = SessionLocal()
     try:
-        # Only fetch JobPosts that aren't already represented in the Jobs table
-        jobs_to_extract = (
+        query = (
             db.query(JobPost)
             .outerjoin(Job, JobPost.id == Job.id)
             .filter(Job.id == None)
-            .all()
         )
-        
+        if limit is not None:
+            query = query.limit(limit)
+
+        jobs_to_extract = query.all()
+
         for job in jobs_to_extract:
             try:
-                # Features extraction stays the same but we now have a clean list
-                features = extract(job.description or "")
-                
+                features = extractor_fn(job.description or "")
+                if not features:
+                    continue
+
                 company = db.query(Company).filter_by(id=job.company_id).first()
 
                 if not company:
@@ -121,9 +135,9 @@ def regex_extractor():
                 hard_kills_list = []
                 for s in normalize_skill_names(features.get("hard_skills") or []):
                     hard_kills_list.append(get_or_create(db, HardSkill, name=s[:120]))
-                
+
                 soft_skills_list = []
-                for s in (features.get("soft_skills") or []):
+                for s in normalize_skill_names(features.get("soft_skills") or []):
                     soft_skills_list.append(get_or_create(db, SoftSkill, name=s[:120]))
 
                 nice_skills_list = []
@@ -134,12 +148,12 @@ def regex_extractor():
 
                 new_job = Job(
                     id=job.id,
-                    job_title=(job.name or "Vaga sem título")[:255],
-                    extractor_type="regex",
+                    job_title=((features.get("job_title") or job.name or "Vaga sem título")[:255]),
+                    extractor_type=extractor_type,
                     salary=salary_val,
                     seniority=features.get("seniority"),
                     years_experience=features.get("years_experience"),
-                    tech_stack=features.get("tech_stack") or [],
+                    tech_stack=normalize_skill_names(features.get("tech_stack") or features.get("hard_skills") or []),
                     company_id=company.id,
                     contract_type_id=contract_obj.id if contract_obj else None,
                     state_id=state_obj.id if state_obj else None,
@@ -160,18 +174,35 @@ def regex_extractor():
                     page=None,
                     request_limit=None,
                     payload=job.description,
-                    source="regex_extractor",
+                    source=error_source,
                 )
                 print(f"Failed to process job {job.id}: {exc}")
-        
+
     except Exception as general_exc:
-        extractor_status["error"] = str(general_exc)
+        status["error"] = str(general_exc)
     finally:
-        extractor_status["running"] = False
-        extractor_status["finished_at"] = datetime.now(UTC).isoformat()
+        status["running"] = False
+        status["finished_at"] = datetime.now(UTC).isoformat()
         db.close()
 
-def start_extractor_thread():
-    thread = Thread(target=regex_extractor)
+
+def regex_extractor():
+    _run_extractor("regex", extract, error_source="regex_extractor")
+
+
+def llm_extractor(limit=None):
+    _run_extractor("llm", llm_extract, error_source="llm_extractor", limit=limit)
+
+
+def start_extractor_thread(extractor_type="regex", *, limit=None):
+    target = regex_extractor
+    if extractor_type == "llm":
+        target = lambda: llm_extractor(limit=limit)
+
+    thread = Thread(target=target)
     thread.daemon = True
     thread.start()
+
+
+def start_llm_extractor_thread(*, limit=None):
+    start_extractor_thread("llm", limit=limit)

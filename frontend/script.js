@@ -14,7 +14,13 @@ let extractorPollTimeout = null;
 let cachedJobs = [];
 let cachedProcessedJobs = [];
 let cachedErrors = [];
+let cachedTerms = [];
 let lastErrors = [];
+let selectedTrendSkill = '';
+const jobsTableState = { page: 1, pageSize: 100, search: '', workplace: '', sort: 'date-desc' };
+const processedJobsTableState = { page: 1, pageSize: 100, search: '', location: '', sort: 'id-desc' };
+const termsTableState = { page: 1, pageSize: 20, search: '', status: 'all' };
+const errorsTableState = { page: 1, pageSize: 20, search: '', source: '' };
 
 // ==================== Initialization ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -56,19 +62,92 @@ function initNavigation() {
 // ==================== Toolbar Initialization ====================
 function initToolbars() {
     // Jobs View
-    document.getElementById('jobs-search').addEventListener('input', debounce(() => renderJobsTable(), 250));
-    document.getElementById('jobs-filter-workplace').addEventListener('change', () => renderJobsTable());
-    document.getElementById('jobs-sort').addEventListener('change', () => renderJobsTable());
-    document.getElementById('jobs-page-size').addEventListener('change', () => { jobsCurrentPage = 1; renderJobsTable(); });
+    document.getElementById('jobs-search').addEventListener('input', debounce((event) => {
+        jobsTableState.search = event.target.value.trim();
+        jobsTableState.page = 1;
+        fetchJobs();
+    }, 250));
+    document.getElementById('jobs-filter-workplace').addEventListener('change', (event) => {
+        jobsTableState.workplace = event.target.value;
+        jobsTableState.page = 1;
+        fetchJobs();
+    });
+    document.getElementById('jobs-sort').addEventListener('change', (event) => {
+        jobsTableState.sort = event.target.value;
+        jobsTableState.page = 1;
+        fetchJobs();
+    });
+    document.getElementById('jobs-page-size').addEventListener('change', (event) => {
+        jobsTableState.pageSize = parseInt(event.target.value, 10);
+        jobsTableState.page = 1;
+        fetchJobs();
+    });
 
     // Processed Jobs View
-    document.getElementById('pj-search').addEventListener('input', debounce(() => renderProcessedJobsTable(), 250));
-    document.getElementById('pj-sort').addEventListener('change', () => renderProcessedJobsTable());
-    document.getElementById('pj-page-size').addEventListener('change', () => { pjCurrentPage = 1; renderProcessedJobsTable(); });
+    document.getElementById('pj-search').addEventListener('input', debounce((event) => {
+        processedJobsTableState.search = event.target.value.trim();
+        processedJobsTableState.page = 1;
+        fetchProcessedJobs();
+    }, 250));
+    document.getElementById('pj-filter-location').addEventListener('input', debounce((event) => {
+        processedJobsTableState.location = event.target.value.trim();
+        processedJobsTableState.page = 1;
+        fetchProcessedJobs();
+    }, 250));
+    document.getElementById('pj-sort').addEventListener('change', (event) => {
+        processedJobsTableState.sort = event.target.value;
+        processedJobsTableState.page = 1;
+        fetchProcessedJobs();
+    });
+    document.getElementById('pj-page-size').addEventListener('change', (event) => {
+        processedJobsTableState.pageSize = parseInt(event.target.value, 10);
+        processedJobsTableState.page = 1;
+        fetchProcessedJobs();
+    });
+
+    // Terms View
+    document.getElementById('terms-search').addEventListener('input', debounce((event) => {
+        termsTableState.search = event.target.value.trim();
+        termsTableState.page = 1;
+        fetchSearchTerms();
+    }, 250));
+    document.getElementById('terms-filter-status').addEventListener('change', (event) => {
+        termsTableState.status = event.target.value;
+        termsTableState.page = 1;
+        fetchSearchTerms();
+    });
+    document.getElementById('terms-page-size').addEventListener('change', (event) => {
+        termsTableState.pageSize = parseInt(event.target.value, 10);
+        termsTableState.page = 1;
+        fetchSearchTerms();
+    });
 
     // Errors View
-    document.getElementById('errors-search').addEventListener('input', debounce(() => renderErrorsTable(), 250));
-    document.getElementById('errors-filter-source').addEventListener('change', () => renderErrorsTable());
+    document.getElementById('errors-search').addEventListener('input', debounce((event) => {
+        errorsTableState.search = event.target.value.trim();
+        errorsTableState.page = 1;
+        fetchErrors();
+    }, 250));
+    document.getElementById('errors-filter-source').addEventListener('change', (event) => {
+        errorsTableState.source = event.target.value;
+        errorsTableState.page = 1;
+        fetchErrors();
+    });
+    document.getElementById('errors-page-size').addEventListener('change', (event) => {
+        errorsTableState.pageSize = parseInt(event.target.value, 10);
+        errorsTableState.page = 1;
+        fetchErrors();
+    });
+
+    const trendSearchInput = document.getElementById('trend-skill-search');
+    if (trendSearchInput) {
+        trendSearchInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                applyTrendSearch();
+            }
+        });
+    }
 }
 
 function debounce(fn, ms) {
@@ -158,6 +237,12 @@ function initActionButtons() {
     document.getElementById('btn-refresh-errors').addEventListener('click', fetchErrors);
     if (document.getElementById('btn-refresh-processed')) {
         document.getElementById('btn-refresh-processed').addEventListener('click', fetchProcessedJobs);
+    }
+    if (document.getElementById('trend-search-btn')) {
+        document.getElementById('trend-search-btn').addEventListener('click', applyTrendSearch);
+    }
+    if (document.getElementById('trend-clear-btn')) {
+        document.getElementById('trend-clear-btn').addEventListener('click', clearTrendSearch);
     }
 }
 
@@ -283,29 +368,218 @@ function renderBarChart(containerId, items, emptyMessage, colorClass = 'primary'
     }).join('');
 }
 
+function renderTrendChart(containerId, trendData, emptyMessage) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!trendData || !Array.isArray(trendData.series) || trendData.series.length === 0) {
+        const selectedSkill = trendData?.selected_skill ? escapeHTML(trendData.selected_skill) : null;
+        container.innerHTML = `<div class="text-center text-muted">${selectedSkill ? `No trend data found for ${selectedSkill}.` : emptyMessage}</div>`;
+        return;
+    }
+
+    const periods = Array.isArray(trendData.periods) ? trendData.periods : [];
+    const series = trendData.series;
+    const selectedSkill = trendData.selected_skill || '';
+    const colors = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#3b82f6', '#ef4444'];
+
+    const width = 720;
+    const height = 260;
+    const padding = { top: 18, right: 18, bottom: 40, left: 36 };
+    const chartWidth = width - padding.left - padding.right;
+    const chartHeight = height - padding.top - padding.bottom;
+    const maxValue = Math.max(
+        ...series.flatMap(item => item.counts || []),
+        1
+    );
+    const xStep = periods.length > 1 ? chartWidth / (periods.length - 1) : 0;
+
+    const yTicks = 4;
+    const gridLines = Array.from({ length: yTicks + 1 }, (_, index) => {
+        const value = Math.round((maxValue / yTicks) * (yTicks - index));
+        const y = padding.top + (chartHeight / yTicks) * index;
+        return { value, y };
+    });
+
+    const buildPoints = (counts) => counts.map((count, index) => {
+        const x = padding.left + (periods.length > 1 ? xStep * index : chartWidth / 2);
+        const y = padding.top + chartHeight - (count / maxValue) * chartHeight;
+        return `${x},${y}`;
+    }).join(' ');
+
+    const xLabels = periods.length <= 6
+        ? periods
+        : [
+            periods[0],
+            periods[Math.floor((periods.length - 1) / 3)],
+            periods[Math.floor((periods.length - 1) * 2 / 3)],
+            periods[periods.length - 1]
+        ];
+
+    const totalsByPeriod = periods.map((period, index) => ({
+        period,
+        total: series.reduce((sum, item) => sum + ((item.counts || [])[index] || 0), 0)
+    }));
+    const busiestDay = totalsByPeriod.reduce((best, current) => current.total > best.total ? current : best, totalsByPeriod[0]);
+    const overallTotal = series.reduce((sum, item) => sum + (item.total || 0), 0);
+
+    const summaryHtml = `
+        <div class="trend-summary-grid">
+            <div class="trend-summary-card">
+                <span class="trend-summary-label">Window</span>
+                <strong class="trend-summary-value">${periods[0]} to ${periods[periods.length - 1]}</strong>
+            </div>
+            <div class="trend-summary-card">
+                <span class="trend-summary-label">${selectedSkill ? 'Selected technology' : 'Tracked technologies'}</span>
+                <strong class="trend-summary-value">${selectedSkill ? escapeHTML(selectedSkill) : series.length}</strong>
+            </div>
+            <div class="trend-summary-card">
+                <span class="trend-summary-label">Busiest day</span>
+                <strong class="trend-summary-value">${busiestDay.period}</strong>
+                <span class="trend-summary-meta">${busiestDay.total} mentions</span>
+            </div>
+            <div class="trend-summary-card">
+                <span class="trend-summary-label">Total mentions</span>
+                <strong class="trend-summary-value">${overallTotal}</strong>
+            </div>
+        </div>
+    `;
+
+    const legendHtml = series.map((item, index) => `
+        <span class="trend-legend-item">
+            <span class="trend-legend-swatch" style="background:${colors[index % colors.length]}"></span>
+            ${escapeHTML(item.name)} (${item.total})
+        </span>
+    `).join('');
+
+    const linesHtml = series.map((item, index) => `
+        <polyline
+            fill="none"
+            stroke="${colors[index % colors.length]}"
+            stroke-width="3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            points="${buildPoints(item.counts || [])}"
+        />
+    `).join('');
+
+    const circlesHtml = series.map((item, index) => (
+        (item.counts || []).map((count, pointIndex) => {
+            const x = padding.left + (periods.length > 1 ? xStep * pointIndex : chartWidth / 2);
+            const y = padding.top + chartHeight - (count / maxValue) * chartHeight;
+            return `
+                <circle cx="${x}" cy="${y}" r="3.5" fill="${colors[index % colors.length]}">
+                    <title>${escapeHTML(item.name)} | ${periods[pointIndex]} | ${count}</title>
+                </circle>
+            `;
+        }).join('')
+    )).join('');
+
+    const xAxisLabelsHtml = xLabels.map(label => {
+        const index = periods.indexOf(label);
+        const x = padding.left + (periods.length > 1 ? xStep * index : chartWidth / 2);
+        return `<text class="trend-axis-label" x="${x}" y="${height - 14}" text-anchor="middle">${label.slice(5)}</text>`;
+    }).join('');
+
+    const yAxisLabelsHtml = gridLines.map(tick => `
+        <g>
+            <line class="trend-grid" x1="${padding.left}" y1="${tick.y}" x2="${width - padding.right}" y2="${tick.y}"></line>
+            <text class="trend-axis-label" x="${padding.left - 8}" y="${tick.y + 4}" text-anchor="end">${tick.value}</text>
+        </g>
+    `).join('');
+
+    const seriesStatsHtml = series.map((item, index) => {
+        const counts = item.counts || [];
+        const activeDays = counts.filter(count => count > 0).length;
+        const latest = counts[counts.length - 1] || 0;
+        const peak = Math.max(...counts, 0);
+        const avg = item.total / Math.max(periods.length, 1);
+        const latestIndex = counts.lastIndexOf(latest);
+        const latestDate = latest > 0 && latestIndex >= 0 ? periods[latestIndex] : 'No recent hits';
+
+        return `
+            <div class="trend-series-card">
+                <div class="trend-series-head">
+                    <span class="trend-legend-item">
+                        <span class="trend-legend-swatch" style="background:${colors[index % colors.length]}"></span>
+                        ${escapeHTML(item.name)}
+                    </span>
+                    <strong class="trend-series-total">${item.total}</strong>
+                </div>
+                <div class="trend-series-metrics">
+                    <span>Total: ${item.total}</span>
+                    <span>Avg/day: ${avg.toFixed(2)}</span>
+                    <span>Peak/day: ${peak}</span>
+                    <span>Active days: ${activeDays}</span>
+                    <span>Latest count: ${latest}</span>
+                    <span>Latest hit: ${latestDate}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        ${summaryHtml}
+        <div class="trend-legend">${legendHtml}</div>
+        <svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Technology trend line chart">
+            ${yAxisLabelsHtml}
+            <line class="trend-axis" x1="${padding.left}" y1="${padding.top + chartHeight}" x2="${width - padding.right}" y2="${padding.top + chartHeight}"></line>
+            ${linesHtml}
+            ${circlesHtml}
+            ${xAxisLabelsHtml}
+        </svg>
+        <div class="trend-footer">
+            <span>${selectedSkill ? `Tracking ${escapeHTML(selectedSkill)} over ${trendData.days || periods.length} days` : `Tracking top ${series.length} technologies over ${trendData.days || periods.length} days`}</span>
+            <span>Peak daily count: ${maxValue}</span>
+        </div>
+        <div class="trend-series-grid">${seriesStatsHtml}</div>
+    `;
+}
+
+function applyTrendSearch() {
+    const input = document.getElementById('trend-skill-search');
+    selectedTrendSkill = (input?.value || '').trim();
+    fetchDashboardMetrics();
+}
+
+function clearTrendSearch() {
+    selectedTrendSkill = '';
+    const input = document.getElementById('trend-skill-search');
+    if (input) input.value = '';
+    fetchDashboardMetrics();
+}
+
 // ==================== Dashboard Metrics ====================
 async function fetchDashboardMetrics() {
     try {
-        const [statsRes, errorsRes, avgRes, salaryRes, techRes, locRes, contractRes, seniorityRes] = await Promise.all([
+        const trendQuery = new URLSearchParams({ days: '30', limit: selectedTrendSkill ? '1' : '5' });
+        if (selectedTrendSkill) {
+            trendQuery.set('skill', selectedTrendSkill);
+        }
+
+        const [statsRes, errorsRes, avgRes, salaryRes, techRes, locRes, contractRes, seniorityRes, trendRes] = await Promise.all([
             fetch(`${API_BASE}/stats`),
-            fetch(`${API_BASE}/errors?limit=50`),
+            fetch(`${API_BASE}/errors?page=1&page_size=50`),
             fetch(`${API_BASE}/features/average-job-post-daily`),
             fetch(`${API_BASE}/features/average-salary`),
             fetch(`${API_BASE}/features/top-technologies`),
             fetch(`${API_BASE}/features/top-locations`),
             fetch(`${API_BASE}/features/jobs-by-contract-type`),
-            fetch(`${API_BASE}/features/jobs-by-seniority`)
+            fetch(`${API_BASE}/features/jobs-by-seniority`),
+            fetch(`${API_BASE}/features/technology-trends?${trendQuery.toString()}`)
         ]);
 
         const stats = await statsRes.json();
-        const errors = await errorsRes.json();
+        const errorsPayload = await errorsRes.json();
         const avgDaily = await avgRes.json();
         const avgSalary = await salaryRes.json();
         const technologies = await techRes.json();
         const locations = await locRes.json();
         const contracts = await contractRes.json();
         const seniority = await seniorityRes.json();
+        const trends = await trendRes.json();
 
+        const errors = errorsPayload.items || [];
         const updateEl = (id, val) => {
             const el = document.getElementById(id);
             if (el) el.innerText = val;
@@ -328,6 +602,7 @@ async function fetchDashboardMetrics() {
         renderBarChart('top-locations-list', locations, 'No data available', 'info');
         renderBarChart('top-contracts-list', contracts, 'No data available', 'warning');
         renderBarChart('top-seniority-list', seniority, 'No data available', 'success');
+        renderTrendChart('technology-trends-chart', trends, 'Trend data will appear after processed jobs are available.');
 
     } catch (e) {
         console.error('Metrics fetch error', e);
@@ -335,56 +610,33 @@ async function fetchDashboardMetrics() {
 }
 
 
-// ==================== Job Posts (with client-side pagination, search, sort, filter) ====================
-let jobsCurrentPage = 1;
-
 async function fetchJobs() {
     try {
-        const res = await fetch(`${API_BASE}/job-posts?limit=500`);
-        cachedJobs = await res.json();
-        jobsCurrentPage = 1;
-        renderJobsTable();
+        const [sort, order] = jobsTableState.sort.split('-');
+        const query = new URLSearchParams({
+            page: String(jobsTableState.page),
+            page_size: String(jobsTableState.pageSize),
+            sort: sort === 'date' ? 'published_date' : sort,
+            order: order || 'desc'
+        });
+        if (jobsTableState.search) query.set('search', jobsTableState.search);
+        if (jobsTableState.workplace) query.set('workplace_type', jobsTableState.workplace);
+
+        const res = await fetch(`${API_BASE}/job-posts?${query.toString()}`);
+        const payload = await res.json();
+        cachedJobs = payload.items || [];
+        renderJobsTable(payload.pagination || emptyPagination(jobsTableState.page, jobsTableState.pageSize));
     } catch (e) {
         showToast('Failed to load jobs', 'error');
     }
 }
 
-function renderJobsTable() {
+function renderJobsTable(pagination) {
     const tbody = document.querySelector('#jobs-table tbody');
-    const search = (document.getElementById('jobs-search').value || '').toLowerCase();
-    const workplaceFilter = document.getElementById('jobs-filter-workplace').value.toLowerCase();
-    const sortKey = document.getElementById('jobs-sort').value;
-    const pageSize = parseInt(document.getElementById('jobs-page-size').value);
-
-    // Filter
-    let filtered = cachedJobs.filter(j => {
-        const matchSearch = !search || 
-            (j.name || '').toLowerCase().includes(search) ||
-            (j.career_page_name || '').toLowerCase().includes(search) ||
-            (j.city || '').toLowerCase().includes(search) ||
-            (j.state || '').toLowerCase().includes(search);
-        const matchWorkplace = !workplaceFilter || (j.workplace_type || '').toLowerCase().includes(workplaceFilter);
-        return matchSearch && matchWorkplace;
-    });
-
-    // Sort
-    filtered = sortArray(filtered, sortKey, {
-        'date-desc': (a, b) => new Date(b.published_date || 0) - new Date(a.published_date || 0),
-        'date-asc': (a, b) => new Date(a.published_date || 0) - new Date(b.published_date || 0),
-        'name-asc': (a, b) => (a.name || '').localeCompare(b.name || ''),
-        'name-desc': (a, b) => (b.name || '').localeCompare(a.name || ''),
-    });
-
-    // Paginate
-    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-    if (jobsCurrentPage > totalPages) jobsCurrentPage = totalPages;
-    const start = (jobsCurrentPage - 1) * pageSize;
-    const paged = filtered.slice(start, start + pageSize);
-
-    if (paged.length === 0) {
+    if (cachedJobs.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No jobs found.</td></tr>';
     } else {
-        tbody.innerHTML = paged.map(j => `
+        tbody.innerHTML = cachedJobs.map(j => `
             <tr>
                 <td class="text-muted">#${j.id}</td>
                 <td><strong>${escapeHTML(j.name)}</strong></td>
@@ -398,58 +650,47 @@ function renderJobsTable() {
         `).join('');
     }
 
-    renderPagination('jobs-pagination', jobsCurrentPage, totalPages, filtered.length, (p) => { jobsCurrentPage = p; renderJobsTable(); });
+    updateTableSummary('jobs', pagination, jobsTableState, {
+        emptyLabel: 'Showing the most recent scraped posts.',
+        filters: [
+            jobsTableState.search ? `search: ${jobsTableState.search}` : '',
+            jobsTableState.workplace ? `workplace: ${jobsTableState.workplace}` : '',
+            `sort: ${humanizeSort(jobsTableState.sort)}`
+        ]
+    });
+    renderPagination('jobs-pagination', pagination, (page) => {
+        jobsTableState.page = page;
+        fetchJobs();
+    });
 }
-
-// ==================== Processed Jobs (with client-side pagination, search, sort) ====================
-let pjCurrentPage = 1;
 
 async function fetchProcessedJobs() {
     try {
-        const res = await fetch(`${API_BASE}/jobs?limit=500`);
-        cachedProcessedJobs = await res.json();
-        pjCurrentPage = 1;
-        renderProcessedJobsTable();
+        const [sort, order] = processedJobsTableState.sort.split('-');
+        const query = new URLSearchParams({
+            page: String(processedJobsTableState.page),
+            page_size: String(processedJobsTableState.pageSize),
+            sort,
+            order: order || 'desc'
+        });
+        if (processedJobsTableState.search) query.set('search', processedJobsTableState.search);
+        if (processedJobsTableState.location) query.set('location', processedJobsTableState.location);
+
+        const res = await fetch(`${API_BASE}/jobs?${query.toString()}`);
+        const payload = await res.json();
+        cachedProcessedJobs = payload.items || [];
+        renderProcessedJobsTable(payload.pagination || emptyPagination(processedJobsTableState.page, processedJobsTableState.pageSize));
     } catch (e) {
         showToast('Failed to load structured jobs', 'error');
     }
 }
 
-function renderProcessedJobsTable() {
+function renderProcessedJobsTable(pagination) {
     const tbody = document.querySelector('#processed-jobs-table tbody');
-    const search = (document.getElementById('pj-search').value || '').toLowerCase();
-    const sortKey = document.getElementById('pj-sort').value;
-    const pageSize = parseInt(document.getElementById('pj-page-size').value);
-
-    // Filter
-    let filtered = cachedProcessedJobs.filter(j => {
-        return !search || 
-            (j.job_title || '').toLowerCase().includes(search) ||
-            (j.company || '').toLowerCase().includes(search) ||
-            (j.city || '').toLowerCase().includes(search) ||
-            (j.state || '').toLowerCase().includes(search);
-    });
-
-    // Sort
-    filtered = sortArray(filtered, sortKey, {
-        'id-desc': (a, b) => b.id - a.id,
-        'id-asc': (a, b) => a.id - b.id,
-        'title-asc': (a, b) => (a.job_title || '').localeCompare(b.job_title || ''),
-        'title-desc': (a, b) => (b.job_title || '').localeCompare(a.job_title || ''),
-        'salary-desc': (a, b) => (b.salary || 0) - (a.salary || 0),
-        'salary-asc': (a, b) => (a.salary || 0) - (b.salary || 0),
-    });
-
-    // Paginate
-    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-    if (pjCurrentPage > totalPages) pjCurrentPage = totalPages;
-    const start = (pjCurrentPage - 1) * pageSize;
-    const paged = filtered.slice(start, start + pageSize);
-
-    if (paged.length === 0) {
+    if (cachedProcessedJobs.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No structured jobs found.</td></tr>';
     } else {
-        tbody.innerHTML = paged.map(j => `
+        tbody.innerHTML = cachedProcessedJobs.map(j => `
             <tr>
                 <td class="text-muted">#${j.id}</td>
                 <td><strong>${escapeHTML(j.job_title)}</strong></td>
@@ -461,36 +702,70 @@ function renderProcessedJobsTable() {
         `).join('');
     }
 
-    renderPagination('pj-pagination', pjCurrentPage, totalPages, filtered.length, (p) => { pjCurrentPage = p; renderProcessedJobsTable(); });
+    updateTableSummary('pj', pagination, processedJobsTableState, {
+        emptyLabel: 'Showing the latest structured jobs.',
+        filters: [
+            processedJobsTableState.search ? `search: ${processedJobsTableState.search}` : '',
+            processedJobsTableState.location ? `location: ${processedJobsTableState.location}` : '',
+            `sort: ${humanizeSort(processedJobsTableState.sort)}`
+        ]
+    });
+    renderPagination('pj-pagination', pagination, (page) => {
+        processedJobsTableState.page = page;
+        fetchProcessedJobs();
+    });
 }
 
 // ==================== Search Terms ====================
 async function fetchSearchTerms() {
     try {
-        const res = await fetch(`${API_BASE}/search-terms?include_inactive=true`);
-        const terms = await res.json();
+        const query = new URLSearchParams({
+            include_inactive: 'true',
+            page: String(termsTableState.page),
+            page_size: String(termsTableState.pageSize)
+        });
+        if (termsTableState.search) query.set('search', termsTableState.search);
+        if (termsTableState.status && termsTableState.status !== 'all') {
+            query.set('status', termsTableState.status);
+        }
+
+        const res = await fetch(`${API_BASE}/search-terms?${query.toString()}`);
+        const payload = await res.json();
+        const terms = payload.items || [];
+        cachedTerms = terms;
         const tbody = document.querySelector('#terms-table tbody');
         
         if (terms.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No search terms configured.</td></tr>';
-            return;
+        } else {
+            tbody.innerHTML = terms.map(t => `
+                <tr>
+                    <td class="text-muted">#${t.id}</td>
+                    <td><strong>${escapeHTML(t.term)}</strong></td>
+                    <td>
+                        <label class="switch">
+                            <input type="checkbox" ${t.is_active ? 'checked' : ''} onchange="toggleTerm(${t.id}, this.checked)">
+                            <span class="slider"></span>
+                        </label>
+                    </td>
+                    <td>
+                        <button class="action-btn delete" onclick="deleteTerm(${t.id})"><i class='bx bx-trash'></i></button>
+                    </td>
+                </tr>
+            `).join('');
         }
 
-        tbody.innerHTML = terms.map(t => `
-            <tr>
-                <td class="text-muted">#${t.id}</td>
-                <td><strong>${escapeHTML(t.term)}</strong></td>
-                <td>
-                    <label class="switch">
-                        <input type="checkbox" ${t.is_active ? 'checked' : ''} onchange="toggleTerm(${t.id}, this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </td>
-                <td>
-                    <button class="action-btn delete" onclick="deleteTerm(${t.id})"><i class='bx bx-trash'></i></button>
-                </td>
-            </tr>
-        `).join('');
+        updateTableSummary('terms', payload.pagination || emptyPagination(termsTableState.page, termsTableState.pageSize), termsTableState, {
+            emptyLabel: 'Showing all configured search terms.',
+            filters: [
+                termsTableState.search ? `search: ${termsTableState.search}` : '',
+                termsTableState.status !== 'all' ? `status: ${termsTableState.status}` : ''
+            ]
+        });
+        renderPagination('terms-pagination', payload.pagination || emptyPagination(termsTableState.page, termsTableState.pageSize), (page) => {
+            termsTableState.page = page;
+            fetchSearchTerms();
+        });
     } catch(e) {
         showToast('Failed to load terms', 'error');
     }
@@ -526,45 +801,31 @@ window.deleteTerm = async (id) => {
     }
 };
 
-// ==================== Errors (with client-side search, filter, pagination) ====================
-let errorsCurrentPage = 1;
-
 async function fetchErrors() {
     try {
-        const res = await fetch(`${API_BASE}/errors?limit=200`);
-        cachedErrors = await res.json();
+        const query = new URLSearchParams({
+            page: String(errorsTableState.page),
+            page_size: String(errorsTableState.pageSize)
+        });
+        if (errorsTableState.search) query.set('search', errorsTableState.search);
+        if (errorsTableState.source) query.set('source', errorsTableState.source);
+
+        const res = await fetch(`${API_BASE}/errors?${query.toString()}`);
+        const payload = await res.json();
+        cachedErrors = payload.items || [];
         lastErrors = cachedErrors;
-        errorsCurrentPage = 1;
-        renderErrorsTable();
+        renderErrorsTable(payload.pagination || emptyPagination(errorsTableState.page, errorsTableState.pageSize));
     } catch (e) {
         showToast('Failed to load errors', 'error');
     }
 }
 
-function renderErrorsTable() {
+function renderErrorsTable(pagination) {
     const tbody = document.querySelector('#errors-table tbody');
-    const search = (document.getElementById('errors-search').value || '').toLowerCase();
-    const sourceFilter = document.getElementById('errors-filter-source').value;
-    const pageSize = 20;
-
-    let filtered = cachedErrors.filter(e => {
-        const matchSearch = !search || 
-            (e.message || '').toLowerCase().includes(search) ||
-            (e.source || '').toLowerCase().includes(search) ||
-            (e.term || '').toLowerCase().includes(search);
-        const matchSource = !sourceFilter || (e.source || '') === sourceFilter;
-        return matchSearch && matchSource;
-    });
-
-    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-    if (errorsCurrentPage > totalPages) errorsCurrentPage = totalPages;
-    const start = (errorsCurrentPage - 1) * pageSize;
-    const paged = filtered.slice(start, start + pageSize);
-
-    if (paged.length === 0) {
+    if (cachedErrors.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">System is healthy. No recent errors.</td></tr>';
     } else {
-        tbody.innerHTML = paged.map(e => `
+        tbody.innerHTML = cachedErrors.map(e => `
             <tr>
                 <td class="text-muted">${new Date(e.created_at).toLocaleString()}</td>
                 <td><span class="badge ${e.source === 'scraper' ? 'neutral' : 'warning'}">${escapeHTML(e.source || 'System')}</span></td>
@@ -574,7 +835,17 @@ function renderErrorsTable() {
         `).join('');
     }
 
-    renderPagination('errors-pagination', errorsCurrentPage, totalPages, filtered.length, (p) => { errorsCurrentPage = p; renderErrorsTable(); });
+    updateTableSummary('errors', pagination, errorsTableState, {
+        emptyLabel: 'Showing the newest log entries first.',
+        filters: [
+            errorsTableState.search ? `search: ${errorsTableState.search}` : '',
+            errorsTableState.source ? `source: ${errorsTableState.source}` : ''
+        ]
+    });
+    renderPagination('errors-pagination', pagination, (page) => {
+        errorsTableState.page = page;
+        fetchErrors();
+    });
 }
 
 // ==================== Modals ====================
@@ -690,9 +961,12 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
 });
 
 // ==================== Pagination Renderer ====================
-function renderPagination(containerId, currentPage, totalPages, totalItems, onPageChange) {
+function renderPagination(containerId, pagination, onPageChange) {
     const container = document.getElementById(containerId);
     if (!container) return;
+    const currentPage = pagination.page || 1;
+    const totalPages = pagination.total_pages || 1;
+    const totalItems = pagination.total_items || 0;
 
     if (totalPages <= 1) {
         container.innerHTML = `<span class="page-info">${totalItems} item${totalItems !== 1 ? 's' : ''}</span>`;
@@ -701,6 +975,7 @@ function renderPagination(containerId, currentPage, totalPages, totalItems, onPa
 
     let html = '';
 
+    html += `<button class="page-btn" ${currentPage === 1 ? 'disabled' : ''} data-page="1"><i class='bx bx-chevrons-left'></i></button>`;
     // Prev button
     html += `<button class="page-btn" ${currentPage === 1 ? 'disabled' : ''} data-page="${currentPage - 1}"><i class='bx bx-chevron-left'></i></button>`;
 
@@ -717,8 +992,10 @@ function renderPagination(containerId, currentPage, totalPages, totalItems, onPa
 
     // Next button
     html += `<button class="page-btn" ${currentPage === totalPages ? 'disabled' : ''} data-page="${currentPage + 1}"><i class='bx bx-chevron-right'></i></button>`;
+    html += `<button class="page-btn" ${currentPage === totalPages ? 'disabled' : ''} data-page="${totalPages}"><i class='bx bx-chevrons-right'></i></button>`;
 
     // Info
+    html += `<span class="page-summary">${formatPaginationRange(pagination)}</span>`;
     html += `<span class="page-info">${totalItems} items</span>`;
 
     container.innerHTML = html;
@@ -749,10 +1026,45 @@ function getPageRange(current, total) {
 }
 
 // ==================== Utilities ====================
-function sortArray(arr, key, sorters) {
-    const fn = sorters[key];
-    if (fn) return [...arr].sort(fn);
-    return arr;
+function emptyPagination(page = 1, pageSize = 20) {
+    return {
+        page,
+        page_size: pageSize,
+        total_items: 0,
+        total_pages: 1,
+        has_next: false,
+        has_prev: false
+    };
+}
+
+function formatPaginationRange(pagination) {
+    if (!pagination.total_items) return 'No matching rows';
+    const start = ((pagination.page - 1) * pagination.page_size) + 1;
+    const end = Math.min(pagination.total_items, start + pagination.page_size - 1);
+    return `Showing ${start}-${end}`;
+}
+
+function humanizeSort(sortValue) {
+    return sortValue
+        .replace('-', ' ')
+        .replace('asc', 'ascending')
+        .replace('desc', 'descending');
+}
+
+function updateTableSummary(prefix, pagination, _state, config = {}) {
+    const totalBadge = document.getElementById(`${prefix}-total-badge`);
+    const rangeBadge = document.getElementById(`${prefix}-range-badge`);
+    const filtersEl = document.getElementById(`${prefix}-active-filters`);
+    if (totalBadge) {
+        totalBadge.innerText = `${pagination.total_items || 0} result${pagination.total_items === 1 ? '' : 's'}`;
+    }
+    if (rangeBadge) {
+        rangeBadge.innerText = `Page ${pagination.page || 1} of ${pagination.total_pages || 1}`;
+    }
+    if (filtersEl) {
+        const activeFilters = (config.filters || []).filter(Boolean);
+        filtersEl.innerText = activeFilters.length ? `Active filters: ${activeFilters.join(' • ')}` : (config.emptyLabel || 'No filters applied.');
+    }
 }
 
 function safeHostname(url) {
