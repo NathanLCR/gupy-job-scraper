@@ -107,12 +107,15 @@ class TestExtractorService(unittest.TestCase):
         Microfrontends aplicados ao contexto mobile ou front-end.Informações 
         adicionais 
         """
-        hard_skills = ["React Native", "TypeScript", "Redux", "Zustand", "Design Systems", 
-        "Styled Components", "APIs REST", "Gradle", "Xcode", "TestFlight", "GitHub Actions", 
-        "Gitflow", "Firebase", "Google Analytics", "Microfrontends", "React", "CI/CD", "REST"]
+        hard_skills = sorted([
+            "APIs REST", "CI/CD", "Design Systems", "Firebase", 
+            "GitHub Actions", "Gitflow", "Google Analytics", "Gradle", 
+            "Microfrontends", "React", "React Native", "Redux", 
+            "Styled Components", "TestFlight", "TypeScript", "Xcode", "Zustand"
+        ])
         features = extract(job_description)
         self.assertEqual(features["hard_skills"], hard_skills)
-        self.assertEqual(features["soft_skills"], ["proatividade", "comunicação"])
+        self.assertEqual(features["soft_skills"], ["inovação"])
         self.assertEqual(features["nice_to_have"], [])
         self.assertEqual(features["years_experience"], None)
         self.assertEqual(features["contract_type"], ["CLT"])

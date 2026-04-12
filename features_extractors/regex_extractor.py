@@ -74,46 +74,37 @@ RE_HARD = re.compile(
     r'('
     r'Python|Java(?:Script)?|TypeScript|C#|\.NET|PHP|Ruby|Go(?:lang)?|'
     r'Kotlin|Swift|Rust|Scala|'
-    r'R(?=\b)'
-    r'|'
-    r'Angular(?:\.?[Jj][Ss])?|React(?:\.?[Jj][Ss])?|Vue(?:\.?[Jj][Ss])?|'
+    r'R(?=\b)|'
+    r'React\s+Native|Angular(?:\.?[Jj][Ss])?|React(?:\.?[Jj][Ss])?|Vue(?:\.?[Jj][Ss])?|'
     r'Next(?:\.?[Jj][Ss])?|Nuxt(?:\.?[Jj][Ss])?|'
     r'Tailwind(?:\s*CSS)?|'
     r'HTML\d?|CSS\d?|SASS|SCSS|'
-    r'|'
     r'Node(?:\.?[Jj][Ss])?|Django|Flask|FastAPI|'
     r'Spring(?:\s*Boot)?|Laravel|Express(?:\.?[Jj][Ss])?|'
     r'Rails|Ruby\s+on\s+Rails|'
     r'Apache|Nginx|Tomcat|'
-    r'|'
     r'Prisma|NextAuth(?:\.?[Jj][Ss])?|tRPC|'
     r'JPA|Hibernate|Entity\s*Framework|'
     r'JWT|OAuth|'
-    r'|'
+    r'Redux|Zustand|Styled\s+Components|Design\s+Systems?|'
     r'TensorFlow|PyTorch|scikit-?learn|Pandas|NumPy|Matplotlib|'
     r'LangChain|LangGraph|LlamaIndex|Hugging\s*Face|'
     r'Airflow|Spark|Hadoop|Databricks|'
-    r'|'
     r'AWS|Azure|GCP|Google\s+Cloud|'
     r'Docker|Kubernetes|Terraform|Ansible|'
     r'CI[/\-]CD|Jenkins|GitHub\s+Actions|'
-    r'|'
     r'MySQL|PostgreSQL|MongoDB|Redis|Oracle|SQL\s*Server|SQLite|'
     r'DynamoDB|Cassandra|Elasticsearch|'
-    r'|'
-    r'REST(?:ful)?(?:\s+APIs?)?|GraphQL|gRPC|Kafka|RabbitMQ|SOAP|Web\s*Services?|'
-    r'|'
-    r'Git(?:Hub|Lab)?|GIT|'
+    r'APIs?\s+REST|REST(?:ful)?(?:\s+APIs?)?|GraphQL|gRPC|Kafka|RabbitMQ|SOAP|Web\s*Services?|'
+    r'Git(?:Hub|Lab)?|GIT|Gitflow|'
     r'Jira|Confluence|'
-    r'|'
     r'SAP(?: PI/PO| ERP)?|'
-    r'|'
     r'Scrum|Kanban|Clean\s+Architecture|SOLID|DDD|TDD|'
-    r'|'
     r'Selenium|Cypress|Jest|JUnit|Pytest|'
-    r'|'
+    r'Firebase|Google\s+Analytics|GA\b|'
+    r'Microfrontends|'
     r'Linux|Unix|Bash|PowerShell|Maven|Gradle|'
-    r'|'
+    r'Xcode|TestFlight|'
     r'Figma|Sketch'
     r')'
     r'(?!\w)',
@@ -189,6 +180,8 @@ _CANON: dict[str, str] = {
     "trpc": "trpc",
     "prisma": "prisma",
     "nextauth": "nextauth", "nextauth.js": "nextauth",
+    "design system": "design system", "design systems": "design system",
+    "google analytics": "google analytics", "ga": "google analytics",
 }
 
 def _normalise(skill: str) -> str:
@@ -229,9 +222,14 @@ def detect_stacks(
     for stack_name, required in TECH_STACKS.items():
         found = required & canonical
         ratio = len(found) / len(required)
+        # Avoid false positives for small stacks: if 2 items, require both.
+        min_threshold = PARTIAL_THRESHOLD
+        if len(required) <= 2:
+            min_threshold = 1.0
+
         if ratio == 1.0:
             detected.append(stack_name)
-        elif ratio >= PARTIAL_THRESHOLD:
+        elif ratio >= min_threshold:
             partial.append(stack_name)
 
     mentioned = list({
@@ -251,15 +249,41 @@ def extract(raw: str) -> dict:
 
     mandatory_text = _section(text, _SEC_MANDATORY,
                                 stop=rf'{_SEC_NICE}|{_SEC_SOFT}|{_SEC_ADD}')
-    niceohave_text = _section(text, _SEC_NICE, stop=_SEC_ADD)
+    niceohave_text = _section(text, _SEC_NICE, stop=rf'{_SEC_SOFT}|{_SEC_ADD}')
     soft_section   = _section(text, _SEC_SOFT, stop=rf'{_SEC_NICE}|{_SEC_ADD}')
 
-    hard_source = mandatory_text or text
-    hard_skills = sorted({s for s in RE_HARD.findall(hard_source) if s.strip()})
+    # Extract nice_to_have first
+    nice_raw = set(RE_HARD.findall(niceohave_text)) if niceohave_text else set()
+    
+    # Extract hard skills from everything EXCEPT niceohave_text
+    hard_source = text.replace(niceohave_text, "") if niceohave_text else text
+    hard_raw = {s for s in RE_HARD.findall(hard_source) if s.strip()}
+    
+    # Deduplicate and normalize
+    seen_norm = set()
+    deduped_hard = []
+    all_hard_matches = sorted(list(hard_raw), key=len, reverse=True)
+    
+    for s in all_hard_matches:
+        norm = _normalise(s)
+        if norm not in seen_norm:
+            seen_norm.add(norm)
+            display = s.upper() if len(s) <= 2 else s
+            deduped_hard.append(display)
+    
+    hard_skills = sorted(deduped_hard)
 
-    nice_skills = sorted(
-        {s for s in RE_HARD.findall(niceohave_text) if s.strip()} - set(hard_skills)
-    ) if niceohave_text else []
+    # Now filter nice_to_have to not include anything already in hard_skills (normalized)
+    deduped_nice = []
+    all_nice_matches = sorted(list(nice_raw), key=len, reverse=True)
+    for s in all_nice_matches:
+        norm = _normalise(s)
+        if norm not in seen_norm:
+            seen_norm.add(norm)
+            display = s.upper() if len(s) <= 2 else s
+            deduped_nice.append(display)
+    
+    nice_skills = sorted(deduped_nice)
 
     soft_source = soft_section + " " + text
     soft_skills = sorted({m.lower() for m in RE_SOFT.findall(soft_source)})

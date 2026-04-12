@@ -12,7 +12,7 @@ from services.error_service import get_errors
 from services.job_service_hm import get_jobs, get_job
 from services.stats_service import get_stats
 from services.jobs_post_service_hm import get_jobs_posts, get_job_post
-from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type
+from services.features_service_hm import get_average_job_post_daily, get_top_locations, get_top_technologies, get_average_salary, get_jobs_by_contract_type, get_jobs_by_seniority
 from services.csv_service import export_job_posts_csv, export_jobs_csv
 from swagger_config import SWAGGER_CONFIG, SWAGGER_TEMPLATE
 
@@ -370,6 +370,18 @@ def jobs_by_contract_type() -> tuple:
         description: Job count grouped by contract type
     """
     return jsonify(get_jobs_by_contract_type()), 200
+
+@app.get("/features/jobs-by-seniority")
+def jobs_by_seniority() -> tuple:
+    """
+    ---
+    tags:
+      - Features
+    responses:
+      200:
+        description: Job count grouped by seniority
+    """
+    return jsonify(get_jobs_by_seniority()), 200
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=8080)
