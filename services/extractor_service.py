@@ -38,14 +38,25 @@ def parse_salary(salary_data):
     if not salary_data:
         return None
     val = salary_data[0] if isinstance(salary_data, list) else salary_data
-    cleaned = str(val).split(',')[0]
-    nums = re.sub(r'[^\d]', '', cleaned)
-    if nums:
+    val_str = str(val).split(',')[0].strip()
+    match = re.search(r'\d+(?:\.\d+)*', val_str)
+    if match:
         try:
+            nums = match.group(0).replace('.', '')
             return int(nums)
         except ValueError:
             pass
     return None
+
+def normalize_contract_type(c_type_str):
+    if not c_type_str:
+        return "CLT"
+    c_lower = str(c_type_str).lower()
+    if "pj" in c_lower or "jurídica" in c_lower or "juridica" in c_lower:
+        return "PJ / Pessoa Jurídica"
+    if "estág" in c_lower or "estag" in c_lower:
+        return "Estágio"
+    return "CLT"
 
 def regex_extractor():
     if extractor_status["running"]:
@@ -89,11 +100,10 @@ def regex_extractor():
                     if job.city:
                         city_obj = get_or_create(db, City, name=job.city[:150], state_id=state_obj.id)
 
-                contract_obj = None
                 c_types = features.get("contract_type", [])
-                if c_types:
-                    c_type_str = c_types[0][:100] if isinstance(c_types, list) else c_types[:100]
-                    contract_obj = get_or_create(db, ContractType, name=c_type_str)
+                raw_c_type = c_types[0] if isinstance(c_types, list) and c_types else ("CLT" if not c_types else str(c_types))
+                normalized_c_type = normalize_contract_type(raw_c_type)
+                contract_obj = get_or_create(db, ContractType, name=normalized_c_type)
 
                 hard_kills_list = []
                 for s in (features.get("hard_skills") or []):
