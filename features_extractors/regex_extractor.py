@@ -294,5 +294,5 @@ def extract(raw: str) -> dict:
         "years_experience": years_experience,
         "salary":           salary,
         "contract_type":    contract,
-        "tech_stack":       [],
+        "tech_stack":       combined_stacks,
     }

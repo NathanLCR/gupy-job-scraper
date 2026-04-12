@@ -1,27 +1,40 @@
 from sqlalchemy import select, insert, update
 from database import SessionLocal
 from entities.search_term import SearchTerm
+from datetime import datetime, UTC
 
 def get_search_terms():
+    db = SessionLocal()
     stm = select(SearchTerm)
-    terms = SessionLocal().scalars(stm).all()
+    terms = db.scalars(stm).all()
+    db.close()
     return terms
 
 def add_search_term(term):
     db = SessionLocal()
-    stm = insert(SearchTerm).values(term=term)
-    db.execute(stm)
+    new_term = SearchTerm(term=term)
+    db.add(new_term)
     db.commit()
+    db.refresh(new_term)
     db.close()
+    return new_term
 
 def remove_search_term(id):
     db = SessionLocal()
-    find_query = select(SearchTerm.id).where(SearchTerm.id == id)
-    term = db.execute(find_query).scalar_one_or_none()
-    if term is None:
+    term_obj = db.query(SearchTerm).filter_by(id=id).first()
+    if term_obj is None:
+        db.close()
         raise ValueError("Search term not found")
-    update_query = update(SearchTerm).where(SearchTerm.id == id).values(is_active=False)
-    db.execute(update_query)
+    term_obj.is_active = False
     db.commit()
+    db.refresh(term_obj)
     db.close()
-    return term
+    return term_obj
+
+def update_last_scraped_at(id):
+    db = SessionLocal()
+    term_obj = db.get(SearchTerm, id)
+    if term_obj:
+        term_obj.last_scraped_at = datetime.now(UTC)
+        db.commit()
+    db.close()

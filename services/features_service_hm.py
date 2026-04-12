@@ -12,12 +12,14 @@ def get_average_job_post_daily():
     )
     query = select(func.avg(subquery.c.daily_count))
     result = db.execute(query).scalar()
+    db.close()
     return result
 
 def get_average_salary():
     db = SessionLocal()
     query = select(func.avg(Job.salary))
     result = db.execute(query).scalar()
+    db.close()
     return result
 
 def get_top_technologies(n = 10):
@@ -30,6 +32,7 @@ def get_top_technologies(n = 10):
         .limit(n)
     )
     result = db.execute(query).all()
+    db.close()
     return [{"name": row[0], "count": row[1]} for row in result]
 
 def get_top_locations(n = 10):
@@ -42,6 +45,7 @@ def get_top_locations(n = 10):
         .limit(n)
     )
     result = db.execute(query).all()
+    db.close()
     return [{"name": row[0], "count": row[1]} for row in result]
 
 def get_jobs_by_contract_type():
@@ -53,4 +57,5 @@ def get_jobs_by_contract_type():
         .order_by(func.count(Job.id).desc())
     )
     result = db.execute(query).all()
+    db.close()
     return [{"name": row[0], "count": row[1]} for row in result]

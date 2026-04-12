@@ -4,7 +4,6 @@ from sqlalchemy import select, desc
 
 from database import SessionLocal
 from entities import ErrorLog
-from utils import _serialize_error
 
 
 def log_error(
@@ -37,7 +36,7 @@ def log_error(
 def get_errors():
     db = SessionLocal()
     try:
-        rows = db.scalars(select(ErrorLog).order_by(desc(ErrorLog.created_at))).all()
-        return [_serialize_error(row) for row in rows]
+        errors = db.scalars(select(ErrorLog).order_by(desc(ErrorLog.created_at))).all()
+        return [error.to_dict() for error in errors]
     finally:
         db.close()

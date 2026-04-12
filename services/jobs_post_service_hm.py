@@ -6,21 +6,23 @@ from sqlalchemy import select
 import json
 from utils import parse_datetime, parse_date
 
-def save_new_job_post(jobs):
+def save_new_job_post(jobs, last_scraped_at=None):
     db = SessionLocal()
     inserted = 0
     try:
         for job_post in jobs:
             job_post_obj = create_job_post(job_post)
-            query = select(JobPost).order_by(JobPost.published_date.desc()).limit(1)
-            latest_job = db.scalars(query).first()
-            if latest_job and latest_job.published_date >= job_post_obj.published_date:
+
+            if last_scraped_at and job_post_obj.published_date and job_post_obj.published_date <= last_scraped_at.replace(tzinfo=None):
                 db.commit()
-                db.close()
                 return inserted
-            else:
-                db.add(job_post_obj)
-                inserted += 1
+
+            existing_job = db.get(JobPost, job_post['id'])
+            if existing_job:
+                continue
+
+            db.add(job_post_obj)
+            inserted += 1
             db.commit()
     except Exception as exc:
         log_error(
@@ -57,20 +59,24 @@ def create_job_post(jobs_raw):
     )
 
 def get_jobs_posts():
+    db = SessionLocal()
     try:
         query = Select(JobPost).order_by(JobPost.published_date.desc())
-        return SessionLocal().scalars(query).all()
+        return db.scalars(query).all()
     except Exception as e:
         log_error(
             source = "jobs_post_service_hm.get_jobs_posts",
             message = "Error getting jobs",
             payload = str(e),
         )
+    finally:
+        db.close()
 
 def get_job_post(id):
+    db = SessionLocal()
     query = Select(JobPost).where(JobPost.id==id)
     try:
-        job_post = SessionLocal().scalars(query).first()
+        job_post = db.scalars(query).first()
         if job_post is None:
             raise ValueError(f"Job post with id {id} not found")
         return job_post
@@ -80,3 +86,6 @@ def get_job_post(id):
             message = "Error getting job post",
             payload = str(e),
         )
+        raise
+    finally:
+        db.close()
