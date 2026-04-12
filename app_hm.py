@@ -76,7 +76,7 @@ def job(id):
 
 @app.get("/search-terms")
 def search_terms():
-    terms = get_search_terms(include_inactive=include_inactive)
+    terms = get_search_terms()
     return jsonify([term.to_dict() for term in terms]), 200
 
 @app.post("/search-terms")

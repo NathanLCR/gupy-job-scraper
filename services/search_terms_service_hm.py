@@ -6,11 +6,9 @@ from database import SessionLocal
 from entities.search_term import SearchTerm
 
 
-def get_search_terms(include_inactive: bool = True):
+def get_search_terms():
     db = SessionLocal()
     stm = select(SearchTerm)
-    if not include_inactive:
-        stm = stm.where(SearchTerm.is_active)
     terms = db.scalars(stm).all()
     db.close()
     return terms
