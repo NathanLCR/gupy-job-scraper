@@ -1,70 +1,126 @@
-# Gupy Job Scraper & Extractor
+# Gupy Job Scraper & AI Extractor
 
-Backend application for scraping job postings from Gupy, storing the raw posts in PostgreSQL, and transforming them into a structured dataset through regex-based feature extraction.
+Backend application for scraping job postings from [Gupy](https://www.gupy.io/), storing the raw posts in PostgreSQL, and transforming them into a structured dataset through regex-based and LLM-assisted feature extraction.
 
-This repository was created as a Continuous Assessment project for the MSc in Artificial Intelligence at Dublin Business School.
+This repository was created as a Continuous Assessment project for the **MSc in Artificial Intelligence** at **Dublin Business School**.
+
+> 📄 **Project Report**: [`Rocha-20082900.pdf`](Rocha-20082900.pdf)
+>
+> Rocha, N.L. (2026). _Gupy Job Scraper & AI Extractor: A Data Acquisition and Preprocessing Pipeline_. MSc Artificial Intelligence, Dublin Business School. Student ID 20082900.
+
+---
 
 ## Overview
 
 The project is an ETL-style pipeline with three main stages:
 
-1. Acquire raw job posts from Gupy based on configured search terms
-2. Store those posts in a relational PostgreSQL database
-3. Extract structured features such as hard skills, soft skills, contract type, salary, and location into normalized tables
+1. **Acquire** — Scrape raw job posts from Gupy based on configurable search terms
+2. **Store** — Persist raw posts in a relational PostgreSQL database
+3. **Extract** — Transform descriptions into structured features (hard skills, soft skills, contract type, salary, seniority, location) using a regex engine or a local LLM via Ollama
 
-The application exposes a Flask API, serves a dashboard UI from the same backend, and includes Swagger documentation for the available endpoints.
+The application exposes a Flask REST API, serves a dashboard UI from the same backend, and includes Swagger documentation for all available endpoints.
 
-Initial exploratory work was done in Colab:
+Initial exploratory work was done in Google Colab:
 [Project notebook](https://colab.research.google.com/drive/1r7xoXbw376IM_KzP7bz2EyOBR_rpCuGz?usp=sharing)
 
 ## Features
 
-- Background scraper for fetching job posts without blocking the API
-- Regex-based feature extraction for job descriptions
+- Background scraper with incremental mode to avoid re-fetching old posts
+- Regex-based feature extraction for job descriptions (80+ technology patterns)
+- LLM-based feature extraction using Ollama and Llama 3.1
 - Normalized relational schema for jobs, companies, contract types, skills, cities, and states
+- Paginated, filterable, and sortable API endpoints
 - CSV export for raw posts and structured jobs
-- Dashboard UI for monitoring scrape and extractor status
+- Dashboard UI with analytics: top technologies, top locations, salary averages, seniority distribution, contract type breakdown, and technology trends over time
 - Swagger UI for API exploration and manual testing
+- Docker Compose setup with health checks and automatic migrations
 
 ## Tech Stack
 
-- Python 3.12+
-- Flask
-- SQLAlchemy
-- Alembic
-- PostgreSQL
-- Flasgger
-- Pandas
-- NumPy
+| Layer           | Technologies          |
+| --------------- | --------------------- |
+| Language        | Python 3.12+          |
+| Web framework   | Flask                 |
+| ORM             | SQLAlchemy 2.0        |
+| Migrations      | Alembic               |
+| Database        | PostgreSQL 16         |
+| API docs        | Flasgger (Swagger UI) |
+| Data processing | Pandas, NumPy         |
+| HTTP client     | Requests              |
+| LLM integration | Ollama (Llama 3.1)    |
+| Deployment      | Docker, Gunicorn      |
+| Env management  | python-dotenv         |
 
 ## Repository Layout
 
-- `app.py`: Swagger-enabled Flask app entrypoint
-- `app_hm.py`: Flask app entrypoint used by the Docker container
-- `database.py`: SQLAlchemy engine, session, and database initialization
-- `entities/`: ORM models
-- `services/`: business logic for scraping, extraction, exports, errors, and stats
-- `features_extractors/`: regex and model-assisted extraction utilities
-- `frontend/`: static dashboard assets
-- `migrations/`: Alembic migration scripts
-- `tests/`: unit and integration tests
+```
+├── app.py                    # Flask app with full Swagger annotations
+├── app_hm.py                 # Flask app used by Docker (paginated endpoints)
+├── database.py               # SQLAlchemy engine, session, and DB init
+├── utils.py                  # Date parsing helpers and CSV header constants
+├── swagger_config.py         # Flasgger / Swagger UI configuration
+├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml
+├── Rocha-20082900.pdf        # Project report
+│
+├── entities/                 # ORM models
+│   ├── base.py               # Declarative base
+│   ├── job_post.py           # Raw scraped post
+│   ├── job.py                # Processed/extracted job
+│   ├── company.py
+│   ├── city.py / state.py
+│   ├── contract_type.py
+│   ├── hard_skill.py / soft_skill.py / nice_to_have_skill.py
+│   ├── search_term.py
+│   ├── error_log.py
+│   └── associations.py       # Many-to-many join tables
+│
+├── services/                 # Business logic
+│   ├── scraper_service_hm.py # Gupy scraping with incremental pagination
+│   ├── extractor_service.py  # Regex and LLM extraction orchestrator
+│   ├── jobs_post_service_hm.py
+│   ├── job_service_hm.py
+│   ├── search_terms_service_hm.py
+│   ├── features_service_hm.py  # Analytics queries
+│   ├── stats_service.py
+│   ├── error_service.py
+│   └── csv_service.py
+│
+├── features_extractors/      # Extraction engines
+│   ├── regex_extractor.py    # Regex patterns + skill normalization
+│   ├── llm_extractor.py      # Ollama / Llama 3.1 integration
+│   ├── bert_extractor.py     # BERT/NER experimental extractor
+│   ├── fine_tune_prep.py     # NER fine-tuning data preparation
+│   └── train_jobbert.py      # JobBERT fine-tuning script
+│
+├── frontend/                 # Static dashboard assets
+│   ├── index.html
+│   ├── script.js
+│   ├── style.css
+│   └── favicon.png
+│
+├── migrations/               # Alembic migration scripts
+├── tests/                    # Unit and integration tests
+└── ai-assistance/            # AI-assisted development logs
+```
 
 ## Quick Start
 
 There are two supported ways to run the project:
 
-- Docker Compose: recommended for the fastest setup
-- Local Python environment: useful for development and debugging
+- **Docker Compose** — recommended for the fastest setup
+- **Local Python environment** — useful for development and debugging
 
 ## Option 1: Run with Docker
 
 The Docker setup includes:
 
-- a PostgreSQL container
-- the Flask app served through `gunicorn`
-- automatic wait-for-database startup handling
-- automatic `alembic upgrade head` on container boot
-- support for Azure-style `PORT` and external database configuration
+- A PostgreSQL 16 container
+- The Flask app served through Gunicorn
+- Automatic wait-for-database startup handling
+- Automatic `alembic upgrade head` on container boot
+- Support for Azure-style `PORT` and external database configuration
 
 ### Start the stack
 
@@ -160,50 +216,65 @@ Once the app is running, a common end-to-end flow looks like this:
 2. Add one or more search terms
 3. Start a scrape
 4. Wait for the scraper status to return to idle
-5. Trigger regex extraction
+5. Trigger regex extraction (or LLM extraction if Ollama is running)
 6. Review raw posts, structured jobs, metrics, and errors
 7. Export CSVs if needed
 
-## Main Endpoints
+## API Endpoints
 
 ### App and docs
 
-- `GET /health`: service health
-- `GET /dashboard`: dashboard UI
-- `GET /docs`: Swagger UI
+| Method | Endpoint     | Description          |
+| ------ | ------------ | -------------------- |
+| `GET`  | `/health`    | Service health check |
+| `GET`  | `/dashboard` | Dashboard UI         |
+| `GET`  | `/docs`      | Swagger UI redirect  |
 
 ### Database and pipeline
 
-- `POST /database/init`: create tables directly from SQLAlchemy metadata
-- `POST /scrape/start`: start a background scrape
-- `GET /scrape/status`: inspect scraper status
-- `POST /regex-extract`: start regex feature extraction
-- `GET /regex-extract/status`: inspect extractor status
+| Method | Endpoint                | Description                            |
+| ------ | ----------------------- | -------------------------------------- |
+| `POST` | `/database/init`        | Create tables from SQLAlchemy metadata |
+| `POST` | `/scrape/start`         | Start a background scrape              |
+| `GET`  | `/scrape/status`        | Inspect scraper status                 |
+| `POST` | `/regex-extract`        | Start regex feature extraction         |
+| `GET`  | `/regex-extract/status` | Inspect regex extractor status         |
+| `POST` | `/llm-extract`          | Start LLM feature extraction           |
+| `GET`  | `/llm-extract/status`   | Inspect LLM extractor status           |
 
 ### Data
 
-- `GET /job-posts`: list raw scraped posts
-- `GET /job-posts/<id>`: get one raw post
-- `GET /jobs`: list processed jobs
-- `GET /jobs/<id>`: get one processed job
+| Method | Endpoint          | Description                        |
+| ------ | ----------------- | ---------------------------------- |
+| `GET`  | `/job-posts`      | List raw scraped posts (paginated) |
+| `GET`  | `/job-posts/<id>` | Get one raw post                   |
+| `GET`  | `/jobs`           | List processed jobs (paginated)    |
+| `GET`  | `/jobs/<id>`      | Get one processed job              |
 
 ### Search terms
 
-- `GET /search-terms`: list search terms
-- `POST /search-terms`: create a search term
-- `PUT /search-terms/<id>`: deactivate a search term
+| Method   | Endpoint             | Description                                |
+| -------- | -------------------- | ------------------------------------------ |
+| `GET`    | `/search-terms`      | List search terms (paginated)              |
+| `POST`   | `/search-terms`      | Create a search term                       |
+| `PUT`    | `/search-terms/<id>` | Update a search term (activate/deactivate) |
+| `DELETE` | `/search-terms/<id>` | Delete a search term                       |
 
-### Exports and stats
+### Exports and analytics
 
-- `GET /job-posts/export`: export raw posts as CSV
-- `GET /jobs/export`: export processed jobs as CSV
-- `GET /stats`: summary metrics
-- `GET /errors`: recent logged errors
-- `GET /features/average-job-post-daily`
-- `GET /features/top-5-technologies`
-- `GET /features/top-5-locations`
-- `GET /features/average-salary`
-- `GET /features/jobs-by-contract-type`
+| Method | Endpoint                           | Description                          |
+| ------ | ---------------------------------- | ------------------------------------ |
+| `GET`  | `/job-posts/export`                | Export raw posts as CSV              |
+| `GET`  | `/jobs/export`                     | Export processed jobs as CSV         |
+| `GET`  | `/stats`                           | Summary metric counts                |
+| `GET`  | `/errors`                          | Recent logged errors (paginated)     |
+| `GET`  | `/features/average-job-post-daily` | Average daily job post count         |
+| `GET`  | `/features/top-technologies`       | Top technologies by job count        |
+| `GET`  | `/features/top-locations`          | Top locations by job count           |
+| `GET`  | `/features/average-salary`         | Average salary across processed jobs |
+| `GET`  | `/features/jobs-by-contract-type`  | Jobs grouped by contract type        |
+| `GET`  | `/features/jobs-by-seniority`      | Jobs grouped by seniority level      |
+| `GET`  | `/features/technology-trends`      | Technology trend time-series         |
 
 ## Migrations
 
@@ -227,11 +298,15 @@ Run the test suite with:
 pytest -q
 ```
 
-If tests fail during import with a PostgreSQL driver or database configuration error, make sure:
+Tests use an **in-memory SQLite database** configured automatically via `conftest.py`, so no running PostgreSQL instance is required.
 
-- dependencies from `requirements.txt` are installed
-- `psycopg2-binary` is available
-- your database environment variables are set correctly
+The test suite includes:
+
+- **Unit tests** for the regex extractor (skill extraction, salary parsing, cleaning)
+- **Unit tests** for utility functions (date/datetime parsing)
+- **Integration tests** for Flask endpoints (health, search terms, job posts, scrape status)
+
+If tests fail during import with a driver error, make sure all dependencies from `requirements.txt` are installed.
 
 ## Troubleshooting
 
@@ -284,12 +359,11 @@ alembic upgrade head
 
 ### Swagger UI does not load
 
-The Docker container runs `app_hm.py`, which does not include the Swagger setup. If you need Swagger locally, run `app.py` instead.
+The Docker container runs `app_hm.py`, which includes Swagger via an optional import. If Flasgger is not installed, Swagger UI will be silently disabled. Run `app.py` directly for guaranteed Swagger support.
 
-## Notes
+## File Naming Convention
 
-- Files ending with `hm` were identified in the project as human-authored variants
-- Other parts of the repository were developed with AI assistance and later integrated into the final project
+Files ending with `_hm` (e.g. `app_hm.py`, `scraper_service_hm.py`) were identified in the project as **human-authored** variants. Other parts of the codebase were developed with AI assistance and then reviewed and integrated into the final project. The `ai-assistance/` directory contains logs documenting the AI-assisted development process.
 
 ## Attribution
 
@@ -303,5 +377,11 @@ This project uses the following libraries and frameworks:
 - [Pandas](https://pandas.pydata.org/)
 - [NumPy](https://numpy.org/)
 - [Requests](https://requests.readthedocs.io/)
+- [Gunicorn](https://gunicorn.org/)
+- [Ollama](https://ollama.com/)
 
 Regex expressions and scraping logic were developed as part of the project work.
+
+## AI-Generated README & Code Audit
+
+> **This README was generated by an AI assistant (Antigravity / Claude Opus 4.6)** based on a full audit of the codebase.
