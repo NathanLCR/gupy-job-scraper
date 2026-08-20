@@ -1,4 +1,92 @@
-import sys
 import os
+import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Insert project root to sys.path
+root_dir = str(Path(__file__).resolve().parents[1])
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+# Point to a temporary test SQLite database for test runs
+test_db_path = os.path.join(root_dir, "test_jobs.db")
+os.environ["DATABASE_URL"] = f"sqlite:///{test_db_path}"
+
+import database
+database._engine = None
+database._session_factory = None
+
+import pytest
+from database import get_engine, init_db, SessionLocal
+from entities import Base, SearchTerm, Company, City, State, ContractType, Job, HardSkill
+from entities.associations import job_hard_skills
+from services.taxonomy_service import seed_default_taxonomy
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_database():
+    # Remove existing test sqlite file if present
+    if os.path.exists(test_db_path):
+        try:
+            os.remove(test_db_path)
+        except OSError:
+            pass
+
+    database._engine = None
+    database._session_factory = None
+    init_db()
+
+    # Seed some sample data for testing endpoints
+    db = SessionLocal()
+    try:
+        # Seed default taxonomy and aliases
+        seed_default_taxonomy(db)
+
+        # Search Terms
+        db.add(SearchTerm(term="Python Developer", is_active=True))
+        db.add(SearchTerm(term="Data Scientist", is_active=True))
+
+        # Company, State, City, Contract
+        comp = Company(name="Tech Corp Inc")
+        state = State(name="São Paulo")
+        db.add(comp)
+        db.add(state)
+        db.flush()
+
+        city = City(name="São Paulo", state_id=state.id)
+        contract = ContractType(name="CLT")
+        skill1 = HardSkill(name="Python")
+        skill2 = HardSkill(name="FastAPI")
+        skill3 = HardSkill(name="Docker")
+        db.add_all([city, contract, skill1, skill2, skill3])
+        db.flush()
+
+        job1 = Job(
+            job_title="Senior Python Developer",
+            extractor_type="regex",
+            salary=18000,
+            seniority="Senior",
+            years_experience=5,
+            tech_stack=["Python", "FastAPI", "Docker"],
+            region="Latin America",
+            country_code="BR",
+            currency="BRL",
+            workplace_type="REMOTE",
+            company_id=comp.id,
+            contract_type_id=contract.id,
+            state_id=state.id,
+            city_id=city.id,
+            hard_skills=[skill1, skill2, skill3],
+        )
+        db.add(job1)
+        db.commit()
+    finally:
+        db.close()
+
+    yield
+
+    # Teardown
+    if os.path.exists(test_db_path):
+        try:
+            os.remove(test_db_path)
+        except OSError:
+            pass

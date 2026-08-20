@@ -1,6 +1,6 @@
 from datetime import date, datetime
-
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, String, Text
+from typing import Optional
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from entities.base import Base
@@ -30,6 +30,18 @@ class JobPost(Base):
     skills: Mapped[str | None] = mapped_column(Text, nullable=True)
     badges: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Multi-Region & Ingestion Fields
+    region: Mapped[str] = mapped_column(String(50), nullable=False, default="Latin America")
+    country_code: Mapped[str] = mapped_column(String(10), nullable=False, default="BR")
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="BRL")
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.now(),
+    )
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -52,4 +64,9 @@ class JobPost(Base):
             "disabilities": self.disabilities,
             "skills": self.skills,
             "badges": self.badges,
+            "region": self.region,
+            "country_code": self.country_code,
+            "currency": self.currency,
+            "fingerprint": self.fingerprint,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }

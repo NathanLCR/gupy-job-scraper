@@ -1,6 +1,14 @@
+"""
+SkillPulse AI Multi-Tier Extraction Cascade & Orchestration Service.
+Coordinates Tier 1 (Trie/Regex), Tier 2 (JobBERT NER), and Tier 3 (Ollama LLM)
+with an intelligent confidence router (SPEC §3.2).
+"""
+
+import logging
 import re
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from threading import Thread
+from typing import Any, Dict, List, Optional, Union
 
 from database import SessionLocal
 from entities import (
@@ -14,10 +22,16 @@ from entities import (
     SoftSkill,
     State,
 )
+from features_extractors.bert_extractor import extract as bert_extract
 from features_extractors.llm_extractor import extract as llm_extract
-from features_extractors.regex_extractor import extract
-from features_extractors.regex_extractor import normalise_skill_label
+from features_extractors.regex_extractor import (
+    extract as regex_extract,
+    normalise_skill_label,
+)
 from services.error_service import log_error
+
+logger = logging.getLogger(__name__)
+
 
 def get_or_create(session, model, **kwargs):
     instance = session.query(model).filter_by(**kwargs).first()
@@ -26,6 +40,7 @@ def get_or_create(session, model, **kwargs):
         session.add(instance)
         session.flush()
     return instance
+
 
 def _new_extractor_status():
     return {
@@ -38,38 +53,46 @@ def _new_extractor_status():
 
 extractor_statuses = {
     "regex": _new_extractor_status(),
+    "bert": _new_extractor_status(),
     "llm": _new_extractor_status(),
+    "cascade": _new_extractor_status(),
 }
 
 
 def get_extractor_status(extractor_type="regex"):
     return extractor_statuses.get(extractor_type, _new_extractor_status())
 
-def parse_salary(salary_data):
+
+def parse_salary(salary_data: Any) -> Optional[int]:
+    """Parse salary to integer value if present."""
     if not salary_data:
         return None
+    if isinstance(salary_data, dict):
+        return salary_data.get("min") or salary_data.get("max")
     val = salary_data[0] if isinstance(salary_data, list) else salary_data
-    val_str = str(val).split(',')[0].strip()
-    match = re.search(r'\d+(?:\.\d+)*', val_str)
+    val_str = str(val).split(",")[0].strip()
+    match = re.search(r"\d+(?:\.\d+)*", val_str)
     if match:
         try:
-            nums = match.group(0).replace('.', '')
+            nums = match.group(0).replace(".", "")
             return int(nums)
         except ValueError:
             pass
     return None
 
-def normalize_contract_type(c_type_str):
+
+def normalize_contract_type(c_type_str: Any) -> str:
     if not c_type_str:
         return "CLT"
     c_lower = str(c_type_str).lower()
     if "pj" in c_lower or "jurídica" in c_lower or "juridica" in c_lower:
         return "PJ / Pessoa Jurídica"
-    if "estág" in c_lower or "estag" in c_lower:
+    if "estág" in c_lower or "estag" in c_lower or "intern" in c_lower:
         return "Estágio"
     return "CLT"
 
-def normalize_skill_names(skills):
+
+def normalize_skill_names(skills: Optional[List[str]]) -> List[str]:
     normalized = []
     seen = set()
     for skill in skills or []:
@@ -80,6 +103,160 @@ def normalize_skill_names(skills):
         seen.add(key)
         normalized.append(label)
     return normalized
+
+
+# ==============================================================================
+# CONFIDENCE ROUTER & CASCADE ORCHESTRATOR
+# ==============================================================================
+
+def calculate_confidence(
+    tier1_res: Dict[str, Any],
+    tier2_res: Optional[Dict[str, Any]] = None,
+    raw_text: str = "",
+) -> float:
+    """
+    Computes an extraction confidence score between 0.0 and 1.0 based on:
+    - Number of hard skills extracted
+    - Resolution of seniority and experience
+    - Clarity of job context & structure
+    """
+    hard_skills = tier1_res.get("hard_skills") or []
+    score = 0.0
+
+    # Skill density
+    num_skills = len(hard_skills)
+    if num_skills >= 4:
+        score += 0.50
+    elif num_skills >= 2:
+        score += 0.40
+    elif num_skills == 1:
+        score += 0.25
+
+    # Seniority resolved
+    if tier1_res.get("seniority"):
+        score += 0.20
+
+    # Experience resolved
+    if tier1_res.get("years_experience") is not None:
+        score += 0.15
+
+    # Soft skills or nice-to-have detected
+    if tier1_res.get("soft_skills") or tier1_res.get("nice_to_have"):
+        score += 0.10
+
+    # Tech stack resolved
+    if tier1_res.get("tech_stack"):
+        score += 0.05
+
+    # Boost slightly if Tier 2 corroborated skills
+    if tier2_res and tier2_res.get("hard_skills"):
+        score += 0.05
+
+    return min(1.0, round(score, 2))
+
+
+def extract_cascade(
+    text: str,
+    tier_threshold: float = 0.85,
+    force_tier: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Multi-tier extraction orchestrator.
+    Runs Tier 1 (Trie/Regex) and Tier 2 (JobBERT), computes confidence,
+    and selectively invokes Tier 3 (Ollama LLM) only when confidence < tier_threshold.
+    """
+    cleaned_text = text.strip()
+    if not cleaned_text:
+        return {
+            "job_title": None,
+            "seniority": None,
+            "years_experience": None,
+            "contract_type": ["CLT"],
+            "salary": None,
+            "hard_skills": [],
+            "soft_skills": [],
+            "nice_to_have": [],
+            "tech_stack": [],
+            "tier_used": "tier1_regex",
+            "confidence": 0.0,
+        }
+
+    # Direct tier overrides
+    if force_tier in ("regex", "tier1"):
+        res = regex_extract(cleaned_text)
+        res["tier_used"] = "tier1_regex"
+        res["confidence"] = 1.0 if res.get("hard_skills") else 0.5
+        return res
+
+    if force_tier in ("bert", "tier2"):
+        res = bert_extract(cleaned_text)
+        res["tier_used"] = "tier2_bert"
+        res["confidence"] = res.get("confidence_score", 0.7)
+        return res
+
+    if force_tier in ("llm", "tier3"):
+        res = llm_extract(cleaned_text)
+        res["tier_used"] = "tier3_ollama_llm"
+        res["confidence"] = res.get("confidence_score", 0.9)
+        return res
+
+    # 1. Execute Tier 1 (High-speed exact matching)
+    t1_result = regex_extract(cleaned_text)
+
+    # 2. Execute Tier 2 (Contextual NER for emerging skills)
+    t2_result = bert_extract(cleaned_text)
+
+    # Merge Tier 1 + Tier 2 skills
+    combined_hard = list(t1_result.get("hard_skills", []))
+    for s in t2_result.get("hard_skills", []):
+        norm = normalise_skill_label(s)
+        if norm not in combined_hard:
+            combined_hard.append(norm)
+
+    t1_result["hard_skills"] = sorted(list(set(combined_hard)))
+
+    # Compute cascade confidence score
+    confidence = calculate_confidence(t1_result, t2_result, raw_text=cleaned_text)
+
+    # Decision boundary: Bypass Tier 3 if confidence >= tier_threshold
+    if confidence >= tier_threshold:
+        t1_result["tier_used"] = "tier1_regex"
+        t1_result["confidence"] = confidence
+        return t1_result
+
+    # 3. Low confidence or ambiguous: Trigger Tier 3 (Ollama LLM)
+    logger.info(f"Confidence {confidence} < {tier_threshold}. Routing to Tier 3 (Ollama LLM)...")
+    t3_result = llm_extract(cleaned_text)
+
+    # Merge Tier 3 enriched intelligence
+    final_hard = set(t1_result.get("hard_skills", [])) | set(t3_result.get("hard_skills", []))
+    final_soft = set(t1_result.get("soft_skills", [])) | set(t3_result.get("soft_skills", []))
+    final_nice = set(t1_result.get("nice_to_have", [])) | set(t3_result.get("nice_to_have", []))
+    final_stacks = set(t1_result.get("tech_stack", [])) | set(t3_result.get("tech_stack", []))
+
+    seniority = t1_result.get("seniority") or t3_result.get("seniority")
+    years_exp = t1_result.get("years_experience") if t1_result.get("years_experience") is not None else t3_result.get("years_experience")
+    salary = t3_result.get("salary") or t1_result.get("salary")
+    contract = t3_result.get("contract_type") or t1_result.get("contract_type") or ["CLT"]
+
+    return {
+        "job_title": t3_result.get("job_title") or t1_result.get("job_title"),
+        "seniority": seniority,
+        "years_experience": years_exp,
+        "contract_type": contract,
+        "salary": salary,
+        "hard_skills": normalize_skill_names(list(final_hard)),
+        "soft_skills": sorted(list(final_soft)),
+        "nice_to_have": normalize_skill_names(list(final_nice)),
+        "tech_stack": sorted(list(final_stacks)),
+        "tier_used": "tier3_ollama_llm",
+        "confidence": max(confidence, t3_result.get("confidence_score", 0.85)),
+    }
+
+
+# ==============================================================================
+# BATCH WORKER INTEGRATION
+# ==============================================================================
 
 def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
     status = extractor_statuses[extractor_type]
@@ -115,7 +292,7 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                     c_name = (job.career_page_name or f"Empresa {job.company_id}")[:255]
                     if db.query(Company).filter_by(name=c_name).first():
                         c_name = f"{c_name} ({job.company_id})"[:255]
-                    
+
                     company = Company(id=job.company_id, name=c_name)
                     db.add(company)
                     db.flush()
@@ -132,9 +309,9 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                 normalized_c_type = normalize_contract_type(raw_c_type)
                 contract_obj = get_or_create(db, ContractType, name=normalized_c_type)
 
-                hard_kills_list = []
+                hard_skills_list = []
                 for s in normalize_skill_names(features.get("hard_skills") or []):
-                    hard_kills_list.append(get_or_create(db, HardSkill, name=s[:120]))
+                    hard_skills_list.append(get_or_create(db, HardSkill, name=s[:120]))
 
                 soft_skills_list = []
                 for s in normalize_skill_names(features.get("soft_skills") or []):
@@ -149,7 +326,7 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                 new_job = Job(
                     id=job.id,
                     job_title=((features.get("job_title") or job.name or "Vaga sem título")[:255]),
-                    extractor_type=extractor_type,
+                    extractor_type=features.get("tier_used") or extractor_type,
                     salary=salary_val,
                     seniority=features.get("seniority"),
                     years_experience=features.get("years_experience"),
@@ -158,7 +335,7 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                     contract_type_id=contract_obj.id if contract_obj else None,
                     state_id=state_obj.id if state_obj else None,
                     city_id=city_obj.id if city_obj else None,
-                    hard_skills=hard_kills_list,
+                    hard_skills=hard_skills_list,
                     soft_skills=soft_skills_list,
                     nice_to_have_skills=nice_skills_list,
                 )
@@ -176,7 +353,7 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                     payload=job.description,
                     source=error_source,
                 )
-                print(f"Failed to process job {job.id}: {exc}")
+                logger.error(f"Failed to process job {job.id}: {exc}")
 
     except Exception as general_exc:
         status["error"] = str(general_exc)
@@ -187,17 +364,24 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
 
 
 def regex_extractor():
-    _run_extractor("regex", extract, error_source="regex_extractor")
+    _run_extractor("regex", regex_extract, error_source="regex_extractor")
 
 
 def llm_extractor(limit=None):
     _run_extractor("llm", llm_extract, error_source="llm_extractor", limit=limit)
 
 
+def cascade_extractor(limit=None):
+    _run_extractor("cascade", extract_cascade, error_source="cascade_extractor", limit=limit)
+
+
 def start_extractor_thread(extractor_type="regex", *, limit=None):
-    target = regex_extractor
     if extractor_type == "llm":
         target = lambda: llm_extractor(limit=limit)
+    elif extractor_type == "cascade":
+        target = lambda: cascade_extractor(limit=limit)
+    else:
+        target = regex_extractor
 
     thread = Thread(target=target)
     thread.daemon = True

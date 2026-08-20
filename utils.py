@@ -1,7 +1,5 @@
-from flask import request
-from datetime import datetime, date, UTC
-
-from entities import Job
+from datetime import date, datetime, UTC
+from typing import Optional
 
 JOB_POSTS_CSV_HEADERS = [
     "id",
@@ -24,10 +22,14 @@ JOB_POSTS_CSV_HEADERS = [
     "disabilities",
     "skills",
     "badges",
+    "region",
+    "country_code",
+    "currency",
+    "fingerprint",
 ]
 
 
-def parse_datetime(value: str | None) -> datetime | None:
+def parse_datetime(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
     try:
@@ -38,7 +40,8 @@ def parse_datetime(value: str | None) -> datetime | None:
     except ValueError:
         return None
 
-def parse_date(value: str | None) -> date | None:
+
+def parse_date(value: Optional[str]) -> Optional[date]:
     if not value:
         return None
     try:

@@ -20,4 +20,4 @@ RUN chmod +x /app/docker/entrypoint.sh
 EXPOSE 8080
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 2 --threads 4 app_hm:app"]
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080} --workers 2"]

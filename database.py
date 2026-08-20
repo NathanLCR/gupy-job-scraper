@@ -1,63 +1,46 @@
 import os
-import urllib.parse
-
+from typing import AsyncGenerator, Generator
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Session, sessionmaker
 
-from entities import Base
-from dotenv import load_dotenv
-
-load_dotenv()
+from config import settings
+from entities.base import Base
 
 _engine = None
+_async_engine = None
 _session_factory = None
+_async_session_factory = None
 
 
 def get_database_url() -> str:
-    database_url = os.getenv("DATABASE_URL")
-    if database_url:
-        return database_url
+    return settings.get_sync_database_url()
 
-    db_user_raw = os.getenv("DB_USER")
-    db_password_raw = os.getenv("DB_PASSWORD")
-    db_host = os.getenv("DB_HOST")
-    db_port = os.getenv("DB_PORT", "5432")
-    db_name = os.getenv("DB_NAME")
-    db_sslmode = os.getenv("DB_SSLMODE")
 
-    missing = [
-        key
-        for key, value in {
-            "DB_HOST": db_host,
-            "DB_NAME": db_name,
-            "DB_USER": db_user_raw,
-            "DB_PASSWORD": db_password_raw,
-        }.items()
-        if not value
-    ]
-    if missing:
-        missing_str = ", ".join(missing)
-        raise RuntimeError(
-            f"Database configuration is incomplete. Set DATABASE_URL or provide: {missing_str}"
-        )
-
-    db_user = urllib.parse.quote_plus(db_user_raw)
-    db_password = urllib.parse.quote_plus(db_password_raw)
-    database_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-    if db_sslmode:
-        database_url = f"{database_url}?sslmode={urllib.parse.quote_plus(db_sslmode)}"
-
-    return database_url
+def get_async_database_url() -> str:
+    return settings.get_async_database_url()
 
 
 def get_engine():
     global _engine
     if _engine is None:
-        _engine = create_engine(get_database_url(), echo=False)
+        url = get_database_url()
+        connect_args = {}
+        if url.startswith("sqlite"):
+            connect_args["check_same_thread"] = False
+        _engine = create_engine(url, echo=False, connect_args=connect_args)
     return _engine
 
 
-def SessionLocal():
+def get_async_engine():
+    global _async_engine
+    if _async_engine is None:
+        url = get_async_database_url()
+        _async_engine = create_async_engine(url, echo=False)
+    return _async_engine
+
+
+def SessionLocal() -> Session:
     global _session_factory
     if _session_factory is None:
         _session_factory = sessionmaker(
@@ -68,5 +51,37 @@ def SessionLocal():
     return _session_factory()
 
 
+def AsyncSessionLocal() -> AsyncSession:
+    global _async_session_factory
+    if _async_session_factory is None:
+        _async_session_factory = async_sessionmaker(
+            bind=get_async_engine(),
+            class_=AsyncSession,
+            autoflush=False,
+            autocommit=False,
+            expire_on_commit=False,
+        )
+    return _async_session_factory()
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """FastAPI async dependency yielding an AsyncSession."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+
+
+def get_sync_db() -> Generator[Session, None, None]:
+    """Sync context generator for workers and background scripts."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 def init_db() -> None:
+    """Creates database tables synchronously (used in bootstrapping/scripts)."""
     Base.metadata.create_all(bind=get_engine())
