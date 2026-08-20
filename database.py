@@ -83,5 +83,26 @@ def get_sync_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Creates database tables synchronously (used in bootstrapping/scripts)."""
-    Base.metadata.create_all(bind=get_engine())
+    """Creates database tables synchronously and applies lightweight column migrations."""
+    engine = get_engine()
+    Base.metadata.create_all(bind=engine)
+
+    # Lightweight runtime column migration for existing tables
+    try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(engine)
+        table_names = inspector.get_table_names()
+
+        with engine.begin() as conn:
+            if "jobs_posts" in table_names:
+                cols = [c["name"] for c in inspector.get_columns("jobs_posts")]
+                if "source" not in cols:
+                    conn.execute(text("ALTER TABLE jobs_posts ADD COLUMN source VARCHAR(50) DEFAULT 'gupy'"))
+
+            if "jobs" in table_names:
+                cols = [c["name"] for c in inspector.get_columns("jobs")]
+                if "source" not in cols:
+                    conn.execute(text("ALTER TABLE jobs ADD COLUMN source VARCHAR(50) DEFAULT 'gupy'"))
+    except Exception as exc:
+        # Non-fatal if DB doesn't support or already migrated
+        pass

@@ -25,6 +25,7 @@ class Job(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Multi-Region & Ingestion Fields
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="gupy", index=True)
     region: Mapped[str] = mapped_column(String(50), nullable=False, default="Latin America")
     country_code: Mapped[str] = mapped_column(String(10), nullable=False, default="BR")
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="BRL")
@@ -78,6 +79,7 @@ class Job(Base):
     def to_dict(self):
         return {
             "id": self.id,
+            "source": self.source,
             "job_title": self.job_title,
             "extractor_type": self.extractor_type,
             "salary": self.salary,

@@ -22,6 +22,11 @@ def get_jobs(
     *,
     search: str | None = None,
     location: str | None = None,
+    source: str | None = None,
+    region: str | None = None,
+    country_code: str | None = None,
+    workplace_type: str | None = None,
+    seniority: str | None = None,
     sort: str = "id",
     order: str = "desc",
     page: int | None = None,
@@ -56,6 +61,21 @@ def get_jobs(
                     State.name.ilike(location_value),
                 )
             )
+
+        if source:
+            query = query.where(Job.source.ilike(source.strip()))
+
+        if region:
+            query = query.where(Job.region.ilike(region.strip()))
+
+        if country_code:
+            query = query.where(Job.country_code.ilike(country_code.strip()))
+
+        if workplace_type:
+            query = query.where(Job.workplace_type.ilike(workplace_type.strip()))
+
+        if seniority:
+            query = query.where(Job.seniority.ilike(f"%{seniority.strip()}%"))
 
         sort_map = {
             "id": Job.id,

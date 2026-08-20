@@ -297,14 +297,14 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                     if not features:
                         continue
 
-                    company = db.query(Company).filter_by(id=job.company_id).first()
-
+                    c_name = (job.career_page_name or (f"Empresa {job.company_id}" if job.company_id else "Empresa Confidencial"))[:255]
+                    company = None
+                    if job.company_id:
+                        company = db.query(Company).filter_by(id=job.company_id).first()
                     if not company:
-                        c_name = (job.career_page_name or f"Empresa {job.company_id}")[:255]
-                        if db.query(Company).filter_by(name=c_name).first():
-                            c_name = f"{c_name} ({job.company_id})"[:255]
-
-                        company = Company(id=job.company_id, name=c_name)
+                        company = db.query(Company).filter_by(name=c_name).first()
+                    if not company:
+                        company = Company(id=job.company_id if job.company_id else None, name=c_name)
                         db.add(company)
                         db.flush()
 
@@ -312,8 +312,11 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                     city_obj = None
                     if job.state:
                         state_obj = get_or_create(db, State, name=job.state[:100])
-                        if job.city:
-                            city_obj = get_or_create(db, City, name=job.city[:150], state_id=state_obj.id)
+                    elif job.country:
+                        state_obj = get_or_create(db, State, name=job.country[:100])
+
+                    if job.city:
+                        city_obj = get_or_create(db, City, name=job.city[:150], state_id=state_obj.id if state_obj else None)
 
                     c_types = features.get("contract_type", [])
                     raw_c_type = c_types[0] if isinstance(c_types, list) and c_types else ("CLT" if not c_types else str(c_types))
@@ -336,12 +339,19 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
 
                     new_job = Job(
                         id=job.id,
+                        source=getattr(job, "source", "gupy") or "gupy",
                         job_title=((features.get("job_title") or job.name or "Vaga sem título")[:255]),
                         extractor_type=features.get("tier_used") or extractor_type,
                         salary=salary_val,
                         seniority=features.get("seniority"),
                         years_experience=features.get("years_experience"),
                         tech_stack=normalize_skill_names(features.get("tech_stack") or features.get("hard_skills") or []),
+                        description=job.description,
+                        region=getattr(job, "region", "Latin America") or "Latin America",
+                        country_code=getattr(job, "country_code", "BR") or "BR",
+                        currency=getattr(job, "currency", "BRL") or "BRL",
+                        workplace_type=getattr(job, "workplace_type", None) or ("REMOTE" if job.is_remote_work else "ONSITE"),
+                        fingerprint=getattr(job, "fingerprint", None),
                         company_id=company.id,
                         contract_type_id=contract_obj.id if contract_obj else None,
                         state_id=state_obj.id if state_obj else None,

@@ -9,7 +9,7 @@ class City(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
-    state_id: Mapped[int] = mapped_column(ForeignKey("states.id"), nullable=False)
+    state_id: Mapped[int | None] = mapped_column(ForeignKey("states.id"), nullable=True)
 
     state = relationship("State", back_populates="cities")
     jobs = relationship("Job", back_populates="city")
