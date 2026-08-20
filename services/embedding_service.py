@@ -9,7 +9,7 @@ import hashlib
 import logging
 import math
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -130,16 +130,14 @@ def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
     return [_generate_fallback_embedding(t, dim=EMBEDDING_DIM) for t in texts]
 
 
-def embed_job_text(
+def _format_job_text(
     job_title: str,
     tech_stack: Optional[List[str]] = None,
     hard_skills: Optional[List[str]] = None,
     description: Optional[str] = None,
     seniority: Optional[str] = None,
-) -> List[float]:
-    """
-    Construct canonical job document representation and generate dense vector embedding.
-    """
+) -> str:
+    """Format canonical job text representation for embedding."""
     parts = []
     if job_title:
         parts.append(f"Title: {job_title}")
@@ -151,8 +149,49 @@ def embed_job_text(
         parts.append(f"Required Skills: {', '.join(hard_skills)}")
     if description:
         parts.append(f"Description: {description[:1000]}")
+    return " | ".join(parts)
 
-    job_text = " | ".join(parts)
+
+def _format_resume_text(
+    resume_text: str,
+    extracted_skills: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Format candidate resume document representation for embedding."""
+    parts = []
+    if resume_text:
+        parts.append(resume_text[:2000])
+
+    if extracted_skills:
+        hard = extracted_skills.get("hard_skills") or []
+        tech = extracted_skills.get("tech_stack") or []
+        soft = extracted_skills.get("soft_skills") or []
+        if hard:
+            parts.append(f"Skills: {', '.join(hard)}")
+        if tech:
+            parts.append(f"Technologies: {', '.join(tech)}")
+        if soft:
+            parts.append(f"Competencies: {', '.join(soft)}")
+
+    return "\n".join(parts)
+
+
+def embed_job_text(
+    job_title: str,
+    tech_stack: Optional[List[str]] = None,
+    hard_skills: Optional[List[str]] = None,
+    description: Optional[str] = None,
+    seniority: Optional[str] = None,
+) -> List[float]:
+    """
+    Construct canonical job document representation and generate dense vector embedding.
+    """
+    job_text = _format_job_text(
+        job_title=job_title,
+        tech_stack=tech_stack,
+        hard_skills=hard_skills,
+        description=description,
+        seniority=seniority,
+    )
     return get_embedding(job_text)
 
 
@@ -177,6 +216,36 @@ def embed_job(job: Any) -> List[float]:
     )
 
 
+def embed_jobs_batch(jobs: List[Any]) -> List[List[float]]:
+    """
+    Generate dense vector embeddings for a batch of jobs (entities or dicts).
+    """
+    if not jobs:
+        return []
+
+    texts = []
+    for job in jobs:
+        if isinstance(job, dict):
+            text = _format_job_text(
+                job_title=job.get("job_title", ""),
+                tech_stack=job.get("tech_stack") or [],
+                hard_skills=job.get("hard_skills") or [],
+                description=job.get("description", ""),
+                seniority=job.get("seniority"),
+            )
+        else:
+            text = _format_job_text(
+                job_title=getattr(job, "job_title", ""),
+                tech_stack=getattr(job, "tech_stack", []) or [],
+                hard_skills=[s.name if hasattr(s, "name") else str(s) for s in (getattr(job, "hard_skills", []) or [])],
+                description=getattr(job, "description", ""),
+                seniority=getattr(job, "seniority", None),
+            )
+        texts.append(text)
+
+    return get_embeddings_batch(texts)
+
+
 def embed_resume_text(
     resume_text: str,
     extracted_skills: Optional[Dict[str, Any]] = None,
@@ -184,23 +253,32 @@ def embed_resume_text(
     """
     Construct candidate resume document representation and generate dense vector embedding.
     """
-    parts = []
-    if resume_text:
-        parts.append(resume_text[:2000])
-
-    if extracted_skills:
-        hard = extracted_skills.get("hard_skills") or []
-        tech = extracted_skills.get("tech_stack") or []
-        soft = extracted_skills.get("soft_skills") or []
-        if hard:
-            parts.append(f"Skills: {', '.join(hard)}")
-        if tech:
-            parts.append(f"Technologies: {', '.join(tech)}")
-        if soft:
-            parts.append(f"Competencies: {', '.join(soft)}")
-
-    doc_text = "\n".join(parts)
+    doc_text = _format_resume_text(resume_text=resume_text, extracted_skills=extracted_skills)
     return get_embedding(doc_text)
+
+
+def embed_resumes_batch(
+    resumes: List[Union[str, Dict[str, Any], Tuple[str, Optional[Dict[str, Any]]]]]
+) -> List[List[float]]:
+    """
+    Generate dense vector embeddings for a batch of candidate resumes.
+    Accepts list of raw resume strings, tuples of (text, extracted_skills), or dicts with keys 'resume_text' / 'extracted_skills'.
+    """
+    if not resumes:
+        return []
+
+    texts = []
+    for item in resumes:
+        if isinstance(item, str):
+            texts.append(_format_resume_text(item))
+        elif isinstance(item, tuple) and len(item) >= 2:
+            texts.append(_format_resume_text(item[0], item[1]))
+        elif isinstance(item, dict):
+            texts.append(_format_resume_text(item.get("resume_text", ""), item.get("extracted_skills")))
+        else:
+            texts.append(_format_resume_text(str(item)))
+
+    return get_embeddings_batch(texts)
 
 
 def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:

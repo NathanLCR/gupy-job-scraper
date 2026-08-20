@@ -18,8 +18,10 @@ from services.embedding_service import (
     batch_cosine_similarity,
     cosine_similarity,
     embed_job,
+    embed_jobs_batch,
     embed_job_text,
     embed_resume_text,
+    embed_resumes_batch,
     get_embedding,
     get_embeddings_batch,
 )
@@ -150,6 +152,45 @@ def test_embed_job_and_resume_helpers():
 
     sim = cosine_similarity(job_vec, resume_vec)
     assert sim > 0.3
+
+
+def test_embed_jobs_batch():
+    """Verify batch job embedding helper with dicts and objects."""
+    jobs_data = [
+        {
+            "job_title": "Python Developer",
+            "tech_stack": ["Python", "FastAPI"],
+            "hard_skills": ["SQL", "Docker"],
+            "description": "Develop APIs.",
+            "seniority": "Mid",
+        },
+        {
+            "job_title": "Frontend Engineer",
+            "tech_stack": ["React", "TypeScript"],
+            "hard_skills": ["CSS", "HTML"],
+            "description": "Build UI components.",
+            "seniority": "Junior",
+        },
+    ]
+    vecs = embed_jobs_batch(jobs_data)
+    assert len(vecs) == 2
+    assert len(vecs[0]) == 384
+    assert len(vecs[1]) == 384
+    assert embed_jobs_batch([]) == []
+
+
+def test_embed_resumes_batch():
+    """Verify batch resume embedding helper with string, tuple, and dict formats."""
+    resumes_data = [
+        "Experienced Python Developer with AWS and Docker skills.",
+        ("React Developer with 3 years experience.", {"hard_skills": ["React", "CSS"]}),
+        {"resume_text": "DevOps Engineer with Kubernetes.", "extracted_skills": {"hard_skills": ["Kubernetes"]}},
+    ]
+    vecs = embed_resumes_batch(resumes_data)
+    assert len(vecs) == 3
+    for v in vecs:
+        assert len(v) == 384
+    assert embed_resumes_batch([]) == []
 
 
 # ==============================================================================
@@ -442,3 +483,42 @@ def test_api_match_validation_errors():
     # Non-existent profile_id
     res_404 = client.post("/api/v1/match", json={"profile_id": 999999})
     assert res_404.status_code == 404
+
+
+def test_api_get_candidate_profile_not_found():
+    """Verify GET /api/v1/match/profile/{id} returns 404 for non-existent profile."""
+    res_404 = client.get("/api/v1/match/profile/999999")
+    assert res_404.status_code == 404
+
+
+def test_matcher_router_alias_import():
+    """Verify api.v1.matcher alias exports match_candidate_cv and router."""
+    from api.v1.matcher import match_candidate_cv, router
+    assert match_candidate_cv is not None
+    assert router is not None
+
+
+def test_hybrid_search_faceted_filters_advanced():
+    """Verify faceted filters on hybrid search including workplace_type and country_code."""
+    db = SessionLocal()
+    try:
+        # Search by workplace_type
+        res_remote = hybrid_search_jobs(query="Python", workplace_type="REMOTE", db=db)
+        for r in res_remote:
+            assert r.job.workplace_type == "REMOTE"
+
+        # Search by country_code
+        res_country = hybrid_search_jobs(query="Python", country_code="BR", db=db)
+        for r in res_country:
+            assert r.job.country_code == "BR"
+
+        # Search with skill filter
+        res_skill = hybrid_search_jobs(query="Developer", skill="Python", db=db)
+        assert len(res_skill) >= 1
+
+        # Search with location filter
+        res_loc = hybrid_search_jobs(query="Developer", location="São Paulo", db=db)
+        assert len(res_loc) >= 1
+    finally:
+        db.close()
+
