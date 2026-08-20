@@ -33,3 +33,6 @@ instance/
 .webassets-cache
 .pytest_cache/
 .tox/
+
+# Project Specs & Internal Docs (Ignored as requested)
+docs/

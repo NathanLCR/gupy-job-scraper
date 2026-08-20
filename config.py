@@ -24,17 +24,34 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: Optional[str] = None
     CELERY_RESULT_BACKEND: Optional[str] = None
 
-    # LLM & Embeddings (Ollama & SentenceTransformers)
+    # Cloud AI Router (Groq & OpenRouter Free Tiers)
+    GROQ_API_KEY: Optional[str] = None
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+
+    OPENROUTER_API_KEY: Optional[str] = None
+    OPENROUTER_MODEL: str = "meta-llama/llama-3.3-70b-instruct:free"
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+
+    # Local LLM Fallback (Ollama)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.1"
+
+    # Dense Embeddings (In-Memory CPU SentenceTransformers)
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     EMBEDDING_DIM: int = 384
 
-    # App environment & port
+    # Batch Extraction Engine & Rate-Limit Settings
+    EXTRACTION_BATCH_SIZE: int = 15
+    EXTRACTION_RATE_LIMIT_DELAY: float = 2.0
+    EXTRACTION_BACKOFF_SECONDS: float = 2.0
+
+    # App environment, CORS & port
     ENVIRONMENT: str = "development"
     PORT: int = 8080
     HOST: str = "0.0.0.0"
     DEBUG: bool = True
+    CORS_ORIGINS: str = '["https://skillpulse.pages.dev", "http://localhost:8000", "http://127.0.0.1:8000"]'
 
     model_config = SettingsConfigDict(
         env_file=".env",

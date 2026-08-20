@@ -1,8 +1,8 @@
 # SkillPulse AI — Technical Specification & Architecture
-**Labor Market Intelligence, Multi-Tier AI Skill Extraction & Semantic Candidate Matcher**
+**Labor Market Intelligence, Multi-Tier Cloud AI Extraction & Semantic Candidate Matcher**
 
 ## 1. Overview & Vision
-**SkillPulse AI** (formerly Gupy Job Scraper & AI Extractor) is an enterprise-ready labor market intelligence platform. It ingests job postings across global regions, extracts structured entity attributes using a multi-tier cascade (Regex $\to$ Local NER $\to$ Structured Ollama LLM), canonicalizes skills into standardized taxonomies (ESCO / O*NET), stores dense semantic embeddings in PostgreSQL (`pgvector`), and powers an interactive **Candidate-to-Job Matching & Skill Gap Analysis** engine.
+**SkillPulse AI** is an enterprise-ready labor market intelligence platform and semantic talent matching engine designed for 100% free-tier cloud deployment. It ingests job postings across global regions (Europe, Latin America, North America), extracts structured entity attributes using a high-performance multi-tier cascade (Regex Trie $\to$ Contextual NER $\to$ Free Cloud LLM Router with Groq & OpenRouter), canonicalizes skills into standardized taxonomies (ESCO / O*NET), stores dense semantic embeddings in PostgreSQL (`pgvector`), and powers an interactive **Candidate-to-Job Matching & Skill Gap Analysis** engine.
 
 ---
 
@@ -10,8 +10,8 @@
 
 ```
                                       ┌─────────────────────────────────────────────────────────┐
-                                      │             Multi-Region Ingestion Layer                │
-                                      │   (Gupy [BR] · European/Adzuna [IE/UK] · JSON Feeds)    │
+                                      │             Cloudflare Global Edge CDN                  │
+                                      │        (Free SSL · DNS Proxy · Pages SPA)               │
                                       └────────────────────────────┬────────────────────────────┘
                                                                    │
                                                                    ▼
@@ -26,9 +26,9 @@
                 ┌───────────────────────────────────────────┐             ┌───────────────────────────────────────────┐
                 │       Multi-Tier Extraction Cascade       │             │       Candidate Resume Matcher Engine     │
                 │                                           │             │                                           │
-                │  Tier 1: Fast Regex / Trie (<5ms)         │             │  1. Parse Resume (PDF/Text)               │
-                │  Tier 2: Token Classifier NER (~30ms)     │             │  2. Extract Candidate Skills Profile      │
-                │  Tier 3: Local Ollama LLM (Structured)    │             │  3. Compute Skill Fit & Missing Overlap   │
+                │  Tier 1: Fast Regex / Trie (<5ms)         │             │  1. 1-Click Demo Personas / Custom Resume │
+                │  Tier 2: Token Classifier NER (~30ms)     │             │  2. Extract Canonical Skills Profile      │
+                │  Tier 3: Cloud LLM (Groq & OpenRouter)    │             │  3. Compute Skill Fit & Missing Overlap   │
                 └─────────────────────┬─────────────────────┘             └─────────────────────┬─────────────────────┘
                                       │                                                         │
                                       ▼                                                         ▼

@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gupy Scraper Dashboard</title>
-    <meta name="description" content="Monitor and manage your Gupy job scraping operations with real-time status, feature extraction, and structured data views.">
+    <title>SkillPulse AI — Labor Market Intelligence & Candidate Matcher</title>
+    <meta name="description" content="Labor market intelligence platform, multi-provider Cloud AI extraction cascade, and semantic candidate matching engine powered by pgvector.">
     <!-- Favicon -->
     <link rel="icon" type="image/png" href="/frontend/favicon.png">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Boxicons -->
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <link rel="stylesheet" href="/frontend/style.css">
@@ -20,18 +20,26 @@
         <!-- Sidebar Navigation -->
         <nav class="sidebar">
             <div class="logo">
-                <i class='bx bxl-python'></i>
-                <span>Job Scraper</span>
+                <div class="logo-icon-wrapper">
+                    <i class='bx bx-pulse pulse-glow'></i>
+                </div>
+                <div class="logo-text">
+                    <span class="brand-name">SkillPulse <span class="ai-badge">AI</span></span>
+                    <span class="brand-sub">Market Intelligence</span>
+                </div>
             </div>
             <ul class="nav-links">
-                <li class="nav-item active" data-target="dashboard-view">
-                    <i class='bx bx-grid-alt'></i> Dashboard
+                <li class="nav-item active" data-target="matcher-view">
+                    <i class='bx bx-target-lock'></i> Candidate Matcher
                 </li>
-                <li class="nav-item" data-target="jobs-view">
-                    <i class='bx bx-briefcase-alt-2'></i> Job Posts
+                <li class="nav-item" data-target="dashboard-view">
+                    <i class='bx bx-grid-alt'></i> Market Analytics
                 </li>
                 <li class="nav-item" data-target="processed-jobs-view">
-                    <i class='bx bx-check-shield'></i> Processed Jobs
+                    <i class='bx bx-check-shield'></i> Structured DB
+                </li>
+                <li class="nav-item" data-target="jobs-view">
+                    <i class='bx bx-briefcase-alt-2'></i> Ingested Posts
                 </li>
                 <li class="nav-item" data-target="terms-view">
                     <i class='bx bx-search-alt'></i> Search Terms
@@ -40,20 +48,20 @@
                     <i class='bx bx-bug'></i> System Logs
                 </li>
                 <div class="nav-divider"></div>
-                <div class="nav-subtitle">ACTIONS</div>
+                <div class="nav-subtitle">QUICK ACTIONS</div>
                 <li>
                     <button class="nav-btn primary" id="btn-scrape-incremental">
-                        <i class='bx bx-refresh'></i> Fetch New Jobs
+                        <i class='bx bx-refresh'></i> Fetch New Posts
                     </button>
                 </li>
                 <li>
                     <button class="nav-btn secondary" id="btn-extract">
-                        <i class='bx bx-layer'></i> Extract Features
+                        <i class='bx bx-layer'></i> AI Batch Extract
                     </button>
                 </li>
                 <li>
                     <a href="/docs" target="_blank" class="nav-btn outline">
-                        <i class='bx bx-code-alt'></i> API Docs
+                        <i class='bx bx-code-alt'></i> OpenAPI Docs
                     </a>
                 </li>
             </ul>
@@ -63,43 +71,221 @@
         <main class="main-content">
             <header class="top-header">
                 <div class="header-title">
-                    <h1 id="page-title">Dashboard Overview</h1>
-                    <p class="subtitle">Monitor and manage your scraping operations.</p>
+                    <h1 id="page-title">Candidate Matcher & Fit Visualizer</h1>
+                    <p class="subtitle" id="page-subtitle">Test candidate profiles with 1-click personas or custom CVs against the hybrid search engine.</p>
                 </div>
                 <div class="header-status-pills">
-                    <div class="scraper-status-pill" id="global-status-pill" title="Scraper Status">
+                    <div class="scraper-status-pill" id="global-status-pill" title="Ingestion Engine Status">
                         <div class="status-indicator"></div>
-                        <span id="global-status-text">Idle</span>
+                        <span id="global-status-text">Ingestor Idle</span>
                     </div>
-                    <div class="scraper-status-pill extractor-pill" id="extractor-status-pill" title="Extractor Status">
+                    <div class="scraper-status-pill extractor-pill" id="extractor-status-pill" title="Cloud AI Router Status">
                         <div class="status-indicator" id="extractor-indicator"></div>
-                        <span id="extractor-status-text">Extractor Idle</span>
+                        <span id="extractor-status-text">AI Router Ready</span>
                     </div>
                 </div>
             </header>
 
             <div class="views-container">
-                <!-- Dashboard View -->
-                <section id="dashboard-view" class="view active">
+
+                <!-- ══════════════════════════════════════════════════════════ -->
+                <!-- CANDIDATE MATCHER VIEW (PRIMARY SHOWCASE) -->
+                <!-- ══════════════════════════════════════════════════════════ -->
+                <section id="matcher-view" class="view active">
+                    <!-- 1-Click Persona Bar -->
+                    <div class="persona-hero glass">
+                        <div class="persona-hero-header">
+                            <div class="persona-title-group">
+                                <span class="persona-kicker"><i class='bx bx-rocket'></i> 1-Click Recruiter Demo Personas</span>
+                                <h2>Test Semantic Fit in Seconds</h2>
+                            </div>
+                            <span class="persona-badge">Instant AI Match</span>
+                        </div>
+                        <p class="persona-hero-desc">Select a pre-configured candidate profile below to evaluate instant composite fit scoring, taxonomy normalization, and granular skill gap analysis:</p>
+                        <div class="persona-buttons-grid">
+                            <button class="persona-card-btn" id="btn-persona-cloud">
+                                <div class="persona-btn-icon"><i class='bx bx-cloud'></i></div>
+                                <div class="persona-btn-text">
+                                    <strong>Senior Cloud Architect</strong>
+                                    <span>6+ yrs · Kubernetes, AWS, Go, Python</span>
+                                </div>
+                            </button>
+                            <button class="persona-card-btn" id="btn-persona-ai">
+                                <div class="persona-btn-icon"><i class='bx bx-brain'></i></div>
+                                <div class="persona-btn-text">
+                                    <strong>AI / ML & RAG Engineer</strong>
+                                    <span>4 yrs · PyTorch, LangChain, pgvector</span>
+                                </div>
+                            </button>
+                            <button class="persona-card-btn" id="btn-persona-fullstack">
+                                <div class="persona-btn-icon"><i class='bx bx-code-curly'></i></div>
+                                <div class="persona-btn-text">
+                                    <strong>Junior Fullstack Developer</strong>
+                                    <span>1 yr · React, TypeScript, Node.js, SQL</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Input and Filters Grid -->
+                    <div class="matcher-input-grid mt-4">
+                        <div class="panel glass">
+                            <div class="panel-header flex-between">
+                                <h2><i class='bx bx-file-blank'></i> Candidate CV / Profile Text</h2>
+                                <button class="btn outline small" id="btn-clear-resume"><i class='bx bx-trash'></i> Clear</button>
+                            </div>
+                            <div class="panel-body">
+                                <textarea id="matcher-resume-input" class="resume-textarea" rows="6" placeholder="Paste full candidate resume, LinkedIn bio, or tech stack description here..."></textarea>
+                                <div class="matcher-controls mt-3">
+                                    <div class="control-group">
+                                        <label for="matcher-region-select"><i class='bx bx-globe'></i> Target Region:</label>
+                                        <select id="matcher-region-select" class="toolbar-select">
+                                            <option value="" selected>All Global Markets</option>
+                                            <option value="Europe">Europe (London, Dublin, Berlin)</option>
+                                            <option value="Latin America">Latin America (São Paulo, Remote BR)</option>
+                                            <option value="North America">North America</option>
+                                        </select>
+                                    </div>
+                                    <div class="control-group">
+                                        <label for="matcher-seniority-select"><i class='bx bx-trending-up'></i> Target Seniority:</label>
+                                        <select id="matcher-seniority-select" class="toolbar-select">
+                                            <option value="" selected>Any Seniority</option>
+                                            <option value="Júnior">Junior / Entry</option>
+                                            <option value="Pleno">Pleno / Mid-Level</option>
+                                            <option value="Sênior">Senior / Lead</option>
+                                            <option value="Especialista">Specialist / Principal</option>
+                                        </select>
+                                    </div>
+                                    <button class="btn primary btn-match-submit" id="btn-run-match">
+                                        <i class='bx bx-bolt-circle'></i> Analyze & Match Candidate
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Match Results Dashboard (Hidden until matched) -->
+                    <div id="matcher-results-section" style="display: none;" class="mt-4">
+                        <!-- Top Summary Cards -->
+                        <div class="matcher-summary-grid">
+                            <!-- Candidate Profile Card -->
+                            <div class="panel glass profile-card">
+                                <div class="panel-header">
+                                    <h2><i class='bx bx-user-check'></i> Extracted Candidate Profile</h2>
+                                </div>
+                                <div class="panel-body">
+                                    <div class="profile-stats">
+                                        <div class="profile-stat-item">
+                                            <span class="stat-label">Identified Seniority</span>
+                                            <strong class="stat-value" id="res-extracted-seniority">Senior</strong>
+                                        </div>
+                                        <div class="profile-stat-item">
+                                            <span class="stat-label">Estimated Exp.</span>
+                                            <strong class="stat-value" id="res-extracted-experience">6+ Years</strong>
+                                        </div>
+                                    </div>
+                                    <div class="mt-3">
+                                        <span class="section-label">Canonical Hard Skills:</span>
+                                        <div id="res-extracted-hard-skills" class="pill-container mt-1"></div>
+                                    </div>
+                                    <div class="mt-3">
+                                        <span class="section-label">Soft & Behavioral Skills:</span>
+                                        <div id="res-extracted-soft-skills" class="pill-container mt-1"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Overall Fit Gauge & Breakdown -->
+                            <div class="panel glass fit-gauge-card">
+                                <div class="panel-header">
+                                    <h2><i class='bx bx-radar'></i> Composite Match Score</h2>
+                                </div>
+                                <div class="panel-body fit-gauge-body">
+                                    <div class="gauge-wrapper">
+                                        <svg class="radial-gauge-svg" viewBox="0 0 120 120">
+                                            <circle class="gauge-bg" cx="60" cy="60" r="50"></circle>
+                                            <circle class="gauge-progress" id="gauge-circle" cx="60" cy="60" r="50"></circle>
+                                        </svg>
+                                        <div class="gauge-center-text">
+                                            <span id="gauge-score-text" class="gauge-score">0%</span>
+                                            <span class="gauge-label">Top Fit</span>
+                                        </div>
+                                    </div>
+                                    <div class="weights-breakdown">
+                                        <div class="weight-row">
+                                            <span>Hard Skill Overlap (50%)</span>
+                                            <strong id="res-hard-ratio">0%</strong>
+                                        </div>
+                                        <div class="weight-row">
+                                            <span>Soft Skill Overlap (20%)</span>
+                                            <strong id="res-soft-ratio">0%</strong>
+                                        </div>
+                                        <div class="weight-row">
+                                            <span>Dense Vector Sim (30%)</span>
+                                            <strong id="res-vector-sim">0%</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Upskilling & Gap Recommendations -->
+                            <div class="panel glass gap-card">
+                                <div class="panel-header">
+                                    <h2><i class='bx bx-line-chart'></i> Skill Gap & Upskilling Path</h2>
+                                </div>
+                                <div class="panel-body">
+                                    <div>
+                                        <span class="gap-label success-label"><i class='bx bx-check-circle'></i> Top Matched Competencies:</span>
+                                        <div id="res-matched-skills" class="pill-container mt-1"></div>
+                                    </div>
+                                    <div class="mt-3">
+                                        <span class="gap-label danger-label"><i class='bx bx-x-circle'></i> Missing Critical Requirements:</span>
+                                        <div id="res-missing-skills" class="pill-container mt-1"></div>
+                                    </div>
+                                    <div class="mt-3">
+                                        <span class="gap-label warning-label"><i class='bx bx-trending-up'></i> High-ROI Upskilling Recommendations:</span>
+                                        <div id="res-recommended-skills" class="pill-container mt-1"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Ranked Matching Job Listings -->
+                        <div class="panel glass mt-4">
+                            <div class="panel-header flex-between">
+                                <h2><i class='bx bx-list-check'></i> Top Ranked Matching Positions (Reciprocal Rank Fusion)</h2>
+                                <span class="table-badge" id="matcher-matches-badge">0 Positions Evaluated</span>
+                            </div>
+                            <div class="ranked-jobs-container" id="ranked-jobs-list">
+                                <!-- Dynamically populated -->
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ══════════════════════════════════════════════════════════ -->
+                <!-- MARKET ANALYTICS DASHBOARD VIEW -->
+                <!-- ══════════════════════════════════════════════════════════ -->
+                <section id="dashboard-view" class="view">
                     <div class="metrics-grid" style="grid-template-columns: repeat(5, 1fr);">
                         <div class="metric-card glass">
                             <div class="metric-icon"><i class='bx bx-briefcase'></i></div>
                             <div class="metric-info">
-                                <h3>Total Scraped</h3>
+                                <h3>Total Ingested</h3>
                                 <h2 id="metric-jobs-count">--</h2>
                             </div>
                         </div>
                         <div class="metric-card glass" style="border-color: rgba(16, 185, 129, 0.3);">
                             <div class="metric-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--success);"><i class='bx bx-check-shield'></i></div>
                             <div class="metric-info">
-                                <h3>Processed</h3>
+                                <h3>Structured Jobs</h3>
                                 <h2 id="metric-processed-count">--</h2>
                             </div>
                         </div>
                         <div class="metric-card glass">
                             <div class="metric-icon"><i class='bx bx-line-chart'></i></div>
                             <div class="metric-info">
-                                <h3>Avg. Daily Posts</h3>
+                                <h3>Avg. Daily Ingest</h3>
                                 <h2 id="metric-avg-daily">--</h2>
                             </div>
                         </div>
@@ -113,7 +299,7 @@
                         <div class="metric-card glass">
                             <div class="metric-icon"><i class='bx bx-search'></i></div>
                             <div class="metric-info">
-                                <h3>Search Terms</h3>
+                                <h3>Active Feeds</h3>
                                 <h2 id="metric-terms-count">--</h2>
                             </div>
                         </div>
@@ -122,12 +308,12 @@
                     <div class="panels-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
                         <div class="panel glass scraper-control">
                             <div class="panel-header">
-                                <h2><i class='bx bx-server'></i> Scraper Engine</h2>
+                                <h2><i class='bx bx-server'></i> Ingestion & AI Cascade Engine</h2>
                             </div>
                             <div class="panel-body">
                                 <div class="status-box">
                                     <div class="status-row">
-                                        <span>Status:</span>
+                                        <span>Ingestion Engine:</span>
                                         <span id="sys-status" class="badge neutral">Connecting...</span>
                                     </div>
                                     <div class="status-row">
@@ -135,14 +321,13 @@
                                         <span id="sys-started">--</span>
                                     </div>
                                     <div class="status-row">
-                                        <span>Duration / Finished:</span>
+                                        <span>Finished At:</span>
                                         <span id="sys-finished">--</span>
                                     </div>
                                 </div>
-                                <!-- Extractor Status -->
                                 <div class="status-box">
                                     <div class="status-row" style="border-bottom: none; padding-bottom: 4px;">
-                                        <span style="font-weight: 600; color: var(--text-primary);"><i class='bx bx-layer' style="color: var(--accent-secondary);"></i> Feature Extractor</span>
+                                        <span style="font-weight: 600; color: var(--text-primary);"><i class='bx bx-layer' style="color: var(--accent-secondary);"></i> Cloud AI Router (Groq/OpenRouter)</span>
                                         <span id="ext-status" class="badge neutral">Idle</span>
                                     </div>
                                     <div class="status-row">
@@ -155,11 +340,11 @@
                                     </div>
                                 </div>
                                 <div class="action-buttons mt-4">
-                                    <button class="btn primary full-width" id="dash-btn-scrape">Run Scrape</button>
+                                    <button class="btn primary full-width" id="dash-btn-scrape">Run Ingestion Scrape</button>
                                 </div>
                                 <div class="action-buttons mt-2" style="display: flex; gap: 8px;">
-                                    <button class="btn outline full-width" id="dash-btn-export-posts" onclick="window.location.href='/job-posts/export'"><i class='bx bx-export'></i> Raw Posts CSV</button>
-                                    <button class="btn outline full-width" id="dash-btn-export-jobs" onclick="window.location.href='/jobs/export'"><i class='bx bx-export'></i> Jobs CSV</button>
+                                    <button class="btn outline full-width" id="dash-btn-export-posts" onclick="window.location.href='/api/v1/jobs/posts/export'"><i class='bx bx-export'></i> Raw Posts CSV</button>
+                                    <button class="btn outline full-width" id="dash-btn-export-jobs" onclick="window.location.href='/api/v1/jobs/export'"><i class='bx bx-export'></i> Jobs CSV</button>
                                 </div>
                             </div>
                         </div>
@@ -213,11 +398,11 @@
                                 <h2><i class='bx bx-line-chart'></i> Technology Trends (Last 30 Days)</h2>
                             </div>
                             <div class="panel-body">
-                                <p class="trend-subtitle">Daily mentions of the top extracted technologies in processed jobs.</p>
+                                <p class="trend-subtitle">Daily frequency of canonical technologies in processed vacancies.</p>
                                 <div class="trend-toolbar">
                                     <div class="search-box trend-search-box">
                                         <i class='bx bx-search'></i>
-                                        <input type="text" id="trend-skill-search" placeholder="Filter by technology, e.g. Python" class="toolbar-input">
+                                        <input type="text" id="trend-skill-search" placeholder="Filter technology, e.g. Python, Kubernetes" class="toolbar-input">
                                     </div>
                                     <div class="trend-toolbar-actions">
                                         <button class="btn outline small" id="trend-search-btn">Search</button>
@@ -230,20 +415,21 @@
                             </div>
                         </div>
                     </div>
-
                 </section>
 
-                <!-- Processed Jobs View -->
+                <!-- ══════════════════════════════════════════════════════════ -->
+                <!-- PROCESSED STRUCTURED DATABASE VIEW -->
+                <!-- ══════════════════════════════════════════════════════════ -->
                 <section id="processed-jobs-view" class="view">
                     <div class="panel glass full-height">
                         <div class="panel-header flex-between">
-                            <h2><i class='bx bx-check-shield'></i> Structured Database</h2>
+                            <h2><i class='bx bx-check-shield'></i> Structured Job Database (pgvector)</h2>
                             <button class="btn outline small" id="btn-refresh-processed"><i class='bx bx-refresh'></i> Refresh</button>
                         </div>
                         <div class="table-hero">
                             <div>
-                                <span class="table-kicker">Processed jobs</span>
-                                <p class="table-description">Inspect extracted jobs with live search, smarter filters, and database-backed pagination.</p>
+                                <span class="table-kicker">Normalized labor records</span>
+                                <p class="table-description">Structured positions enriched with ESCO taxonomies, extracted requirements, and dense embeddings.</p>
                             </div>
                             <div class="table-meta-badges">
                                 <span class="table-badge" id="pj-total-badge">0 results</span>
@@ -293,22 +479,23 @@
                                 </tbody>
                             </table>
                         </div>
-                        <!-- Added during: Enhancing Job Scraper Dashboard (Link: file:///Users/nathanlucio/.gemini/antigravity/brain/4db90108-ee99-41ea-8e56-d962562746fd/.system_generated/logs/overview.txt) -->
                         <div class="pagination-bar" id="pj-pagination"></div>
                     </div>
                 </section>
 
-                <!-- Jobs View -->
+                <!-- ══════════════════════════════════════════════════════════ -->
+                <!-- RAW INGESTED JOBS VIEW -->
+                <!-- ══════════════════════════════════════════════════════════ -->
                 <section id="jobs-view" class="view">
                     <div class="panel glass full-height">
                         <div class="panel-header flex-between">
-                            <h2><i class='bx bx-briefcase-alt-2'></i> Job Postings Database</h2>
+                            <h2><i class='bx bx-briefcase-alt-2'></i> Raw Ingested Postings</h2>
                             <button class="btn outline small" id="btn-export-csv"><i class='bx bx-export'></i> Export CSV</button>
                         </div>
                         <div class="table-hero">
                             <div>
-                                <span class="table-kicker">Raw scraped posts</span>
-                                <p class="table-description">Browse the latest imported jobs with responsive filtering and server-driven pages.</p>
+                                <span class="table-kicker">Ingested feeds</span>
+                                <p class="table-description">Raw descriptions imported before entity extraction and normalization.</p>
                             </div>
                             <div class="table-meta-badges">
                                 <span class="table-badge" id="jobs-total-badge">0 results</span>
@@ -318,7 +505,7 @@
                         <div class="table-toolbar elevated">
                             <div class="search-box">
                                 <i class='bx bx-search'></i>
-                                <input type="text" id="jobs-search" placeholder="Search by title, company, city..." class="toolbar-input">
+                                <input type="text" id="jobs-search" placeholder="Search title, company, city..." class="toolbar-input">
                             </div>
                             <div class="toolbar-controls">
                                 <select id="jobs-filter-workplace" class="toolbar-select">
@@ -364,17 +551,19 @@
                     </div>
                 </section>
 
-                <!-- Search Terms View -->
+                <!-- ══════════════════════════════════════════════════════════ -->
+                <!-- SEARCH TERMS VIEW -->
+                <!-- ══════════════════════════════════════════════════════════ -->
                 <section id="terms-view" class="view">
                     <div class="panel glass">
                         <div class="panel-header flex-between">
-                            <h2><i class='bx bx-search-alt'></i> Manage Search Terms</h2>
+                            <h2><i class='bx bx-search-alt'></i> Configured Search Terms</h2>
                             <button class="btn primary small" id="btn-add-term"><i class='bx bx-plus'></i> Add Term</button>
                         </div>
                         <div class="table-hero">
                             <div>
-                                <span class="table-kicker">Scrape inputs</span>
-                                <p class="table-description">Filter, page, and maintain the terms that feed the scraper pipeline.</p>
+                                <span class="table-kicker">Target queries</span>
+                                <p class="table-description">Manage the keyword targets that trigger scraper ingestion cycles.</p>
                             </div>
                             <div class="table-meta-badges">
                                 <span class="table-badge" id="terms-total-badge">0 results</span>
@@ -382,10 +571,9 @@
                             </div>
                         </div>
                         
-                        <!-- Add Term Form (Hidden by default) -->
                         <div id="add-term-form" class="form-container" style="display: none;">
-                            <input type="text" id="new-term-input" placeholder="e.g. Data Engineer" class="text-input">
-                            <button class="btn solid-green" id="btn-submit-term">Save</button>
+                            <input type="text" id="new-term-input" placeholder="e.g. Platform Engineer, Machine Learning" class="text-input">
+                            <button class="btn solid-green" id="btn-submit-term">Save Term</button>
                             <button class="btn outline" id="btn-cancel-term">Cancel</button>
                         </div>
 
@@ -427,17 +615,19 @@
                     </div>
                 </section>
 
-                <!-- Errors View -->
+                <!-- ══════════════════════════════════════════════════════════ -->
+                <!-- SYSTEM LOGS VIEW -->
+                <!-- ══════════════════════════════════════════════════════════ -->
                 <section id="errors-view" class="view">
                     <div class="panel glass full-height">
                         <div class="panel-header flex-between">
-                            <h2><i class='bx bx-bug'></i> System Logs & Errors</h2>
+                            <h2><i class='bx bx-bug'></i> System Logs & Operational Events</h2>
                             <button class="btn outline small" id="btn-refresh-errors"><i class='bx bx-refresh'></i> Refresh</button>
                         </div>
                         <div class="table-hero">
                             <div>
-                                <span class="table-kicker">Operational visibility</span>
-                                <p class="table-description">Scan recent failures by source, message content, and page window without loading the whole log table.</p>
+                                <span class="table-kicker">Operational observability</span>
+                                <p class="table-description">Review pipeline audit logs, HTTP 429 recovery events, and background exceptions.</p>
                             </div>
                             <div class="table-meta-badges">
                                 <span class="table-badge" id="errors-total-badge">0 results</span>
@@ -453,8 +643,8 @@
                                 <select id="errors-filter-source" class="toolbar-select">
                                     <option value="">All Sources</option>
                                     <option value="scraper">Scraper</option>
-                                    <option value="regex_extractor">Extractor</option>
-                                    <option value="llm_extractor">LLM Extractor</option>
+                                    <option value="regex_extractor">Tier 1 Extractor</option>
+                                    <option value="llm_extractor">Cloud AI Router</option>
                                 </select>
                                 <select id="errors-page-size" class="toolbar-select small">
                                     <option value="10">10</option>
@@ -470,12 +660,12 @@
                                     <tr>
                                         <th width="150">Timestamp (UTC)</th>
                                         <th width="120">Context</th>
-                                        <th>Error Message</th>
+                                        <th>Log Message</th>
                                         <th width="80">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr><td colspan="4" class="text-center text-muted">Loading errors...</td></tr>
+                                    <tr><td colspan="4" class="text-center text-muted">Loading logs...</td></tr>
                                 </tbody>
                             </table>
                         </div>
@@ -500,9 +690,8 @@
                 <div class="job-meta-flex">
                     <span id="modal-job-company" class="badge neutral">Company</span>
                     <span id="modal-job-location" class="badge neutral">Location</span>
-                    <a id="modal-job-url" href="#" target="_blank" class="badge info"><i class='bx bx-link-external'></i> View Original Page</a>
+                    <a id="modal-job-url" href="#" target="_blank" class="badge info"><i class='bx bx-link-external'></i> View Source</a>
                 </div>
-                
                 <h3 class="mt-4 text-secondary">Extracted Features</h3>
                 <div class="features-grid">
                     <div class="feature-box">
@@ -510,40 +699,12 @@
                         <div id="modal-job-skills" class="pill-container"></div>
                     </div>
                     <div class="feature-box">
-                        <h4>Badges / Tags</h4>
+                        <h4>Badges</h4>
                         <div id="modal-job-badges" class="pill-container"></div>
                     </div>
-                    <div class="feature-box">
-                        <h4>Disabilities Accepted</h4>
-                        <span id="modal-job-disabilities">N/A</span>
-                    </div>
                 </div>
-
                 <h3 class="mt-4 text-secondary">Description Snippet</h3>
                 <div class="raw-box mt-2" id="modal-job-desc"></div>
-            </div>
-        </div>
-    </div>
-
-    <div id="error-modal" class="modal-overlay" style="display: none;">
-        <div class="modal-content glass">
-            <div class="modal-header">
-                <h2 class="text-danger"><i class='bx bx-bug'></i> System Log Details</h2>
-                <button class="action-btn" onclick="closeModal('error-modal')"><i class='bx bx-x'></i></button>
-            </div>
-            <div class="modal-body">
-                <div class="status-box">
-                    <div class="status-row"><span>Error ID:</span><span id="modal-err-id"></span></div>
-                    <div class="status-row"><span>Timestamp:</span><span id="modal-err-time"></span></div>
-                    <div class="status-row"><span>Source/Context:</span><span id="modal-err-context"></span></div>
-                    <div class="status-row"><span>Search Term Trigger:</span><span id="modal-err-term"></span></div>
-                    <div class="status-row"><span>Pagination Page:</span><span id="modal-err-page"></span></div>
-                </div>
-                <h3 class="mt-4 text-secondary">Raw Message</h3>
-                <pre class="raw-box mt-2 text-danger" id="modal-err-msg"></pre>
-                
-                <h3 class="mt-4 text-secondary">Raw Request Payload</h3>
-                <pre class="raw-box mt-2 text-muted" id="modal-err-payload"></pre>
             </div>
         </div>
     </div>
@@ -559,10 +720,9 @@
                 <div class="job-meta-flex">
                     <span id="pj-company" class="badge neutral">Company</span>
                     <span id="pj-location" class="badge neutral">Location</span>
-                    <span id="pj-contract" class="badge neutral">Contract Type</span>
+                    <span id="pj-contract" class="badge neutral">Contract</span>
                     <span id="pj-salary" class="badge success">Salary</span>
                 </div>
-                
                 <h3 class="mt-4 text-secondary">Normalized Requirements</h3>
                 <div class="features-grid" style="grid-template-columns: 1fr 1fr;">
                     <div class="feature-box">
@@ -578,9 +738,26 @@
                         <div id="pj-nicetohave" class="pill-container"></div>
                     </div>
                 </div>
-
                 <h3 class="mt-4 text-secondary">Raw Tech Stack Mapping</h3>
                 <pre class="raw-box mt-2 text-muted" id="pj-techstack"></pre>
+            </div>
+        </div>
+    </div>
+
+    <div id="error-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content glass">
+            <div class="modal-header">
+                <h2 class="text-danger"><i class='bx bx-bug'></i> Log Details</h2>
+                <button class="action-btn" onclick="closeModal('error-modal')"><i class='bx bx-x'></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="status-box">
+                    <div class="status-row"><span>Error ID:</span><span id="modal-err-id"></span></div>
+                    <div class="status-row"><span>Timestamp:</span><span id="modal-err-time"></span></div>
+                    <div class="status-row"><span>Context:</span><span id="modal-err-context"></span></div>
+                </div>
+                <h3 class="mt-4 text-secondary">Message</h3>
+                <pre class="raw-box mt-2 text-danger" id="modal-err-msg"></pre>
             </div>
         </div>
     </div>
