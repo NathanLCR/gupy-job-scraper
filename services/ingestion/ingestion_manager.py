@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 
@@ -31,6 +31,7 @@ class IngestionManager:
     """Central orchestrator for multi-source public job ingestion."""
 
     def __init__(self):
+        self._lock = Lock()
         self._adapters: Dict[str, BaseIngestionAdapter] = {}
         self._register_default_adapters()
         self._status: Dict[str, Any] = {
@@ -78,7 +79,8 @@ class IngestionManager:
         ]
 
     def get_status(self) -> Dict[str, Any]:
-        return dict(self._status)
+        with self._lock:
+            return dict(self._status)
 
     def _get_active_terms(self, db) -> List[str]:
         terms = db.scalars(
@@ -111,19 +113,20 @@ class IngestionManager:
         Synchronous ingestion execution across specified or all sources.
         Saves new records to jobs_posts and deduplicates against DB.
         """
-        if self._status["running"]:
-            return {"status": "already_running", "message": "Ingestion is already running"}
+        with self._lock:
+            if self._status["running"]:
+                return {"status": "already_running", "message": "Ingestion is already running"}
 
-        init_db()
-        self._status["running"] = True
-        self._status["source"] = source
-        self._status["started_at"] = datetime.now(UTC).isoformat()
-        self._status["finished_at"] = None
-        self._status["error"] = None
-        self._status["total_fetched"] = 0
-        self._status["total_inserted"] = 0
-        self._status["total_skipped"] = 0
-        self._status["sources_stats"] = {}
+            init_db()
+            self._status["running"] = True
+            self._status["source"] = source
+            self._status["started_at"] = datetime.now(UTC).isoformat()
+            self._status["finished_at"] = None
+            self._status["error"] = None
+            self._status["total_fetched"] = 0
+            self._status["total_inserted"] = 0
+            self._status["total_skipped"] = 0
+            self._status["sources_stats"] = {}
 
         db = SessionLocal()
         total_inserted = 0
@@ -253,7 +256,10 @@ class IngestionManager:
             # Update search terms last_scraped_at timestamp
             try:
                 now_dt = datetime.now(UTC)
-                for st in db.query(SearchTerm).filter(SearchTerm.is_active.is_(True)).all():
+                query_st = db.query(SearchTerm).filter(SearchTerm.is_active.is_(True))
+                if active_terms:
+                    query_st = query_st.filter(SearchTerm.term.in_(active_terms))
+                for st in query_st.all():
                     st.last_scraped_at = now_dt
                 db.commit()
             except Exception:
@@ -276,12 +282,14 @@ class IngestionManager:
             }
 
         except Exception as exc:
-            self._status["error"] = str(exc)
+            with self._lock:
+                self._status["error"] = str(exc)
             log_error(f"Ingestion crashed: {exc}", source="ingestion_manager", payload=str(exc))
             return {"status": "error", "error": str(exc)}
         finally:
-            self._status["running"] = False
-            self._status["finished_at"] = datetime.now(UTC).isoformat()
+            with self._lock:
+                self._status["running"] = False
+                self._status["finished_at"] = datetime.now(UTC).isoformat()
             db.close()
 
     def start_ingest_thread(

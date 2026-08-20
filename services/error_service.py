@@ -23,7 +23,7 @@ def log_error(
                 term=term,
                 page=page,
                 request_limit=request_limit,
-                payload=(json.dumps(payload, ensure_ascii=False) if payload is not None else None)
+                payload=(json.dumps(payload, ensure_ascii=False, default=str) if payload is not None else None)
             )
         )
         db.commit()

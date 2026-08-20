@@ -257,6 +257,18 @@ def embed_resume_text(
     return get_embedding(doc_text)
 
 
+def embed_candidate(candidate: Any) -> List[float]:
+    """
+    Generate dense vector embedding for candidate profile entity or extracted skills dict.
+    """
+    if isinstance(candidate, dict):
+        raw_text = candidate.get("raw_resume_text") or candidate.get("description") or ""
+        return embed_resume_text(raw_text, extracted_skills=candidate)
+    raw_text = getattr(candidate, "raw_resume_text", "") or ""
+    skills = getattr(candidate, "parsed_skills", {}) or {}
+    return embed_resume_text(raw_text, extracted_skills=skills)
+
+
 def embed_resumes_batch(
     resumes: List[Union[str, Dict[str, Any], Tuple[str, Optional[Dict[str, Any]]]]]
 ) -> List[List[float]]:

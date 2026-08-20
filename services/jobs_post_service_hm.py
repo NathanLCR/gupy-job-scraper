@@ -147,26 +147,28 @@ def get_jobs_posts(
         }
     except Exception as e:
         log_error(
-            source = "jobs_post_service_hm.get_jobs_posts",
-            message = "Error getting jobs",
-            payload = str(e),
+            source="jobs_post_service_hm.get_jobs_posts",
+            message=f"Error getting jobs: {str(e)}",
+            payload=str(e),
         )
+        raise
     finally:
         db.close()
 
 def get_job_post(id):
     db = SessionLocal()
-    query = Select(JobPost).where(JobPost.id==id)
+    query = Select(JobPost).where(JobPost.id == id)
     try:
         job_post = db.scalars(query).first()
         if job_post is None:
             raise ValueError(f"Job post with id {id} not found")
+        db.expunge(job_post)
         return job_post
     except Exception as e:
         log_error(
-            source = "jobs_post_service_hm.get_job_post",
-            message = "Error getting job post",
-            payload = str(e),
+            source="jobs_post_service_hm.get_job_post",
+            message=f"Error getting job post with id {id}: {str(e)}",
+            payload=str(e),
         )
         raise
     finally:

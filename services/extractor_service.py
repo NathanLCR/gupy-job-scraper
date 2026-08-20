@@ -7,7 +7,7 @@ with an intelligent confidence router (SPEC §3.2).
 import logging
 import re
 from datetime import UTC, datetime
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any, Dict, List, Optional, Union
 
 from database import SessionLocal
@@ -28,9 +28,12 @@ from features_extractors.regex_extractor import (
     extract as regex_extract,
     normalise_skill_label,
 )
+from services.embedding_service import embed_job_text
 from services.error_service import log_error
 
 logger = logging.getLogger(__name__)
+
+_extractor_lock = Lock()
 
 
 def get_or_create(session, model, **kwargs):
@@ -60,7 +63,9 @@ extractor_statuses = {
 
 
 def get_extractor_status(extractor_type="regex"):
-    return extractor_statuses.get(extractor_type, _new_extractor_status())
+    with _extractor_lock:
+        status_dict = extractor_statuses.get(extractor_type, _new_extractor_status())
+        return dict(status_dict)
 
 
 def parse_salary(salary_data: Any) -> Optional[int]:
@@ -264,14 +269,14 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
     import time
     from config import settings
 
-    status = extractor_statuses[extractor_type]
-    if status["running"]:
-        return
-
-    status["running"] = True
-    status["started_at"] = datetime.now(UTC).isoformat()
-    status["finished_at"] = None
-    status["error"] = None
+    with _extractor_lock:
+        status = extractor_statuses[extractor_type]
+        if status["running"]:
+            return
+        status["running"] = True
+        status["started_at"] = datetime.now(UTC).isoformat()
+        status["finished_at"] = None
+        status["error"] = None
 
     db = SessionLocal()
     try:
@@ -336,22 +341,34 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                         nice_skills_list.append(get_or_create(db, NiceToHaveSkill, name=s[:120]))
 
                     salary_val = parse_salary(features.get("salary"))
+                    tech_stack_items = normalize_skill_names(features.get("tech_stack") or features.get("hard_skills") or [])
+                    resolved_title = (features.get("job_title") or job.name or "Vaga sem título")[:255]
+
+                    # Generate 384-dimensional dense vector embedding
+                    embedding_vec = embed_job_text(
+                        job_title=resolved_title,
+                        tech_stack=tech_stack_items,
+                        hard_skills=[s.name for s in hard_skills_list],
+                        description=job.description,
+                        seniority=features.get("seniority"),
+                    )
 
                     new_job = Job(
                         id=job.id,
                         source=getattr(job, "source", "gupy") or "gupy",
-                        job_title=((features.get("job_title") or job.name or "Vaga sem título")[:255]),
+                        job_title=resolved_title,
                         extractor_type=features.get("tier_used") or extractor_type,
                         salary=salary_val,
                         seniority=features.get("seniority"),
                         years_experience=features.get("years_experience"),
-                        tech_stack=normalize_skill_names(features.get("tech_stack") or features.get("hard_skills") or []),
+                        tech_stack=tech_stack_items,
                         description=job.description,
                         region=getattr(job, "region", "Latin America") or "Latin America",
                         country_code=getattr(job, "country_code", "BR") or "BR",
                         currency=getattr(job, "currency", "BRL") or "BRL",
                         workplace_type=getattr(job, "workplace_type", None) or ("REMOTE" if job.is_remote_work else "ONSITE"),
                         fingerprint=getattr(job, "fingerprint", None),
+                        embedding=embedding_vec,
                         company_id=company.id,
                         contract_type_id=contract_obj.id if contract_obj else None,
                         state_id=state_obj.id if state_obj else None,
@@ -381,10 +398,12 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                     logger.error(f"Failed to process job {job.id}: {exc}")
 
     except Exception as general_exc:
-        status["error"] = str(general_exc)
+        with _extractor_lock:
+            extractor_statuses[extractor_type]["error"] = str(general_exc)
     finally:
-        status["running"] = False
-        status["finished_at"] = datetime.now(UTC).isoformat()
+        with _extractor_lock:
+            extractor_statuses[extractor_type]["running"] = False
+            extractor_statuses[extractor_type]["finished_at"] = datetime.now(UTC).isoformat()
         db.close()
 
 

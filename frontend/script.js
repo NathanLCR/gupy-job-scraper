@@ -222,8 +222,10 @@ function renderMatchResults(data) {
 
     const seniorityEl = document.getElementById('res-extracted-seniority');
     const expEl = document.getElementById('res-extracted-experience');
-    if (seniorityEl) seniorityEl.innerText = (hardSkills.length > 5 ? 'Senior / Lead' : (hardSkills.length > 2 ? 'Pleno / Mid' : 'Junior'));
-    if (expEl) expEl.innerText = `${Math.max(1, Math.min(8, Math.round(hardSkills.length * 0.8)))} + Years`;
+    const extSeniority = data.extracted_skills?.seniority || (hardSkills.length > 5 ? 'Senior' : (hardSkills.length > 2 ? 'Mid' : 'Junior'));
+    const extYears = data.extracted_skills?.years_experience;
+    if (seniorityEl) seniorityEl.innerText = extSeniority;
+    if (expEl) expEl.innerText = extYears ? `${extYears} Year${extYears === 1 ? '' : 's'}` : `${Math.max(1, Math.min(8, Math.round(hardSkills.length * 0.8)))} Years`;
 
     const hardPillsEl = document.getElementById('res-extracted-hard-skills');
     if (hardPillsEl) {
@@ -585,11 +587,25 @@ function initActionButtons() {
         });
     }
 
-    // CSV Export
+    // CSV Exports with dynamic API_BASE
     const btnExportCsv = document.getElementById('btn-export-csv');
     if (btnExportCsv) {
         btnExportCsv.addEventListener('click', () => {
             window.location.href = `${API_BASE}/api/v1/jobs/posts/export`;
+        });
+    }
+
+    const dashBtnExportPosts = document.getElementById('dash-btn-export-posts');
+    if (dashBtnExportPosts) {
+        dashBtnExportPosts.addEventListener('click', () => {
+            window.location.href = `${API_BASE}/api/v1/jobs/posts/export`;
+        });
+    }
+
+    const dashBtnExportJobs = document.getElementById('dash-btn-export-jobs');
+    if (dashBtnExportJobs) {
+        dashBtnExportJobs.addEventListener('click', () => {
+            window.location.href = `${API_BASE}/api/v1/jobs/export`;
         });
     }
 
@@ -956,9 +972,10 @@ async function fetchDashboardMetrics() {
         const seniority = await seniorityRes.json();
         const trends = await trendRes.json();
 
-        const totalJobs = stats.total_jobs || 395;
-        const totalProcessed = stats.total_processed || 395;
-        const totalTerms = stats.total_terms || 39;
+        const totalJobs = typeof stats.total_jobs === 'number' ? stats.total_jobs : 0;
+        const totalProcessed = typeof stats.total_processed === 'number' ? stats.total_processed : 0;
+        const totalTerms = typeof stats.total_terms === 'number' ? stats.total_terms : 0;
+        const totalSkillsCount = Array.isArray(technologies) && technologies.length ? `${technologies.length}+` : (totalJobs > 0 ? `${totalJobs * 3}+` : '0');
 
         const updateEl = (id, val) => {
             const el = document.getElementById(id);
@@ -966,11 +983,11 @@ async function fetchDashboardMetrics() {
         };
 
         updateEl('metric-jobs-count', totalJobs.toLocaleString());
-        updateEl('metric-skills-count', '1,420+');
+        updateEl('metric-skills-count', totalSkillsCount);
         updateEl('metric-terms-count', totalTerms);
         
         const avgVal = parseFloat(avgDaily);
-        updateEl('metric-avg-daily', isNaN(avgVal) || avgVal === 0 ? '98.8 / day' : `${avgVal.toFixed(1)} / day`);
+        updateEl('metric-avg-daily', !isNaN(avgVal) && avgVal > 0 ? `${avgVal.toFixed(1)} / day` : '0.0 / day');
         
         renderDistributionList('top-technologies-list', technologies, 'No technology data', totalJobs);
         renderDistributionList('top-seniority-list', seniority, 'No seniority data', totalJobs);

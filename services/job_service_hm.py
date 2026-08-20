@@ -108,11 +108,20 @@ def get_jobs(
 
 def get_job(id):
     db = SessionLocal()
-    query = Select(Job).where(Job.id==id)
+    query = Select(Job).where(Job.id == id)
     try:
         job = db.scalars(query).first()
         if job is None:
             raise ValueError(f"Job with id {id} not found")
+        # Touch lazy relationships within session context before expunging
+        _ = list(job.hard_skills or [])
+        _ = list(job.soft_skills or [])
+        _ = list(job.nice_to_have_skills or [])
+        _ = job.company
+        _ = job.contract_type
+        _ = job.state
+        _ = job.city
+        db.expunge(job)
         return job
     except Exception as e:
         log_error(

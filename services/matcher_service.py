@@ -62,13 +62,12 @@ def compute_skill_overlaps(
 
     # Nice to have skills
     missing_nice = [name for name in job_nice_names if name.strip().lower() not in candidate_hard]
-
-    # Ratios
+    # Ratios (0.0 if job specifies no requirements)
     hard_overlap_ratio = (
-        len(matched_hard) / max(1, len(job_hard_names)) if job_hard_names else 0.5
+        len(matched_hard) / len(job_hard_names) if job_hard_names else 0.0
     )
     soft_overlap_ratio = (
-        len(matched_soft) / max(1, len(job_soft_names)) if job_soft_names else 0.8
+        len(matched_soft) / len(job_soft_names) if job_soft_names else 0.0
     )
 
     return {
@@ -109,22 +108,44 @@ class CandidateMatcherService:
     @classmethod
     def parse_and_extract_candidate(
         cls,
-        resume_text: str,
+        raw_text: str,
+        engine: str = "cascade",
         db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
-        Extract skills from resume using Phase 2 Cascade and normalize with Phase 3 Taxonomy.
+        Extract structured skills, seniority, years of experience, and taxonomies
+        from raw candidate resume text.
         """
-        # 1. Multi-tier cascade extraction
-        extracted = extract_cascade(resume_text)
+        from services.extractor_service import extract_cascade, normalise_skill_label
+        from services.taxonomy_service import normalize_skills
 
-        # 2. Canonical taxonomy normalization
-        raw_hard = extracted.get("hard_skills") or []
-        normalized_items = normalize_skills(raw_hard, db=db)
-        canonical_hard_skills = [item.canonical_name for item in normalized_items]
+        cleaned = (raw_text or "").strip()
+        if not cleaned:
+            raise ValueError("Resume text cannot be empty")
 
-        extracted["canonical_hard_skills"] = canonical_hard_skills
-        return extracted
+        extracted = extract_cascade(cleaned)
+        hard_skills = extracted.get("hard_skills") or []
+        soft_skills = extracted.get("soft_skills") or []
+        tech_stack = extracted.get("tech_stack") or hard_skills
+
+        # Normalize canonical names
+        if db is not None:
+            normalized_items = normalize_skills(hard_skills, db=db)
+            canonical_hard = [item.canonical_name for item in normalized_items]
+        else:
+            canonical_hard = [normalise_skill_label(s) for s in hard_skills]
+
+        return {
+            "name": extracted.get("name"),
+            "seniority": extracted.get("seniority") or "Mid",
+            "years_experience": extracted.get("years_experience") or 3,
+            "hard_skills": hard_skills,
+            "canonical_hard_skills": canonical_hard,
+            "soft_skills": soft_skills,
+            "tech_stack": tech_stack,
+            "salary": extracted.get("salary"),
+            "confidence_score": extracted.get("confidence_score", 0.8),
+        }
 
     @classmethod
     def match_resume(
@@ -133,47 +154,43 @@ class CandidateMatcherService:
         db: Session,
         target_region: Optional[str] = None,
         seniority: Optional[str] = None,
-        workplace_type: Optional[str] = None,
         limit: int = 10,
         min_fit_score: float = 0.0,
     ) -> Dict[str, Any]:
         """
-        Match candidate resume text against job database with full gap analysis.
+        End-to-end candidate CV matcher against structured pgvector Job entities.
+        Computes composite fit scores, skill overlaps, and gap analyses.
         """
-        cleaned_text = (resume_text or "").strip()
-        if not cleaned_text:
-            raise ValueError("Resume text cannot be empty")
+        from entities import Job
+        from services.embedding_service import cosine_similarity, embed_candidate, embed_job
 
-        # 1. Extract and canonicalize candidate profile
-        extracted = cls.parse_and_extract_candidate(cleaned_text, db=db)
-        candidate_hard = _extract_skill_set(extracted.get("canonical_hard_skills") or extracted.get("hard_skills"))
-        candidate_soft = _extract_skill_set(extracted.get("soft_skills"))
+        # 1. Extract candidate profile
+        extracted = cls.parse_and_extract_candidate(resume_text, db=db)
+        candidate_hard = set(s.strip().lower() for s in (extracted.get("canonical_hard_skills") or extracted.get("hard_skills") or []))
+        candidate_soft = set(s.strip().lower() for s in (extracted.get("soft_skills") or []))
 
-        # 2. Compute candidate dense vector embedding
-        candidate_vec = embed_resume_text(cleaned_text, extracted_skills=extracted)
+        # 2. Dense semantic embedding for candidate
+        candidate_vec = embed_candidate(extracted)
 
-        # 3. Query candidate jobs with filters
+        # 3. Query candidate database jobs
         query = select(Job)
-        if target_region and target_region.lower() != "global":
+        if target_region and target_region.lower() not in ("global", "all"):
             query = query.where(Job.region.ilike(f"%{target_region.strip()}%"))
         if seniority:
             query = query.where(Job.seniority.ilike(f"%{seniority.strip()}%"))
-        if workplace_type:
-            query = query.where(Job.workplace_type.ilike(f"%{workplace_type.strip()}%"))
 
         jobs = db.scalars(query.limit(200)).all()
         evaluated_count = len(jobs)
 
+        # 4. Score each job against candidate
         scored_matches: List[Dict[str, Any]] = []
-        missing_skill_counter: Counter = Counter()
+        missing_skill_counter: Counter[str] = Counter()
 
-        # 4. Evaluate each job
         for job in jobs:
             job_hard_names = [s.name for s in (job.hard_skills or [])]
             job_soft_names = [s.name for s in (job.soft_skills or [])]
             job_nice_names = [s.name for s in (job.nice_to_have_skills or [])]
 
-            # Compute skill overlaps
             overlaps = compute_skill_overlaps(
                 candidate_hard=candidate_hard,
                 candidate_soft=candidate_soft,
@@ -233,10 +250,18 @@ class CandidateMatcherService:
         scored_matches.sort(key=lambda m: m["fit_score"], reverse=True)
         top_matches = scored_matches[:limit]
 
-        # 5. Populate recommended high-ROI skills across top matching roles
-        top_recommended = [skill for skill, _ in missing_skill_counter.most_common(5)]
+        # 5. Populate recommended high-ROI skills tailored to each matching role
         for match in top_matches:
-            match["gap_analysis"]["recommended_skills"] = top_recommended
+            job_missing = match["gap_analysis"]["missing_hard_skills"]
+            recommended = sorted(
+                job_missing,
+                key=lambda s: missing_skill_counter.get(s, 0),
+                reverse=True,
+            )
+            for s, _ in missing_skill_counter.most_common(5):
+                if s not in recommended:
+                    recommended.append(s)
+            match["gap_analysis"]["recommended_skills"] = recommended[:5]
 
         return {
             "extracted_skills": {

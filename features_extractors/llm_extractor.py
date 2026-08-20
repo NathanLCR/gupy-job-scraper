@@ -153,24 +153,38 @@ def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
         return None
     cleaned = text.strip()
     # Strip markdown fences if present
-    if cleaned.startswith("```json"):
-        cleaned = cleaned[7:]
-    elif cleaned.startswith("```"):
-        cleaned = cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    cleaned = cleaned.strip()
+    if "```json" in cleaned:
+        parts = cleaned.split("```json")
+        if len(parts) > 1:
+            cleaned = parts[1].split("```")[0].strip()
+    elif "```" in cleaned:
+        parts = cleaned.split("```")
+        if len(parts) > 1:
+            cleaned = parts[1].split("```")[0].strip()
 
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        # Fallback: search for first { and last }
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
+        pass
+
+    # Fallback 1: search for first { to last }
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback 2: find substring starting at first { and scan for valid JSON
+    start_idx = cleaned.find("{")
+    if start_idx != -1:
+        for end_idx in range(len(cleaned), start_idx, -1):
+            if cleaned[end_idx - 1] == "}":
+                candidate = cleaned[start_idx:end_idx]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    continue
     return None
 
 

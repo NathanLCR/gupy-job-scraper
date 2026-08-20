@@ -92,9 +92,9 @@ def get_skills_analytics(
             )
         )
 
-    top_locs = get_top_locations(n=5)
-    contract_data = get_jobs_by_contract_type()
-    seniority_data = get_jobs_by_seniority()
+    top_locs = get_top_locations(n=5, region=region)
+    contract_data = get_jobs_by_contract_type(region=region)
+    seniority_data = get_jobs_by_seniority(region=region)
 
     return SkillAnalyticsResponse(
         total_jobs=total_jobs,
@@ -128,25 +128,20 @@ def get_skill_cooccurrence_graph(
 
 
 @router.get("/taxonomies", response_model=TaxonomyListResponse)
-def get_taxonomies(
-    db: Session = Depends(get_sync_db),
-):
-    """
-    Retrieve standard ESCO / O*NET hierarchical taxonomy categories and tree nodes.
-    """
-    tree = get_taxonomy_tree(db)
+def get_taxonomies(db: Session = Depends(get_sync_db)):
+    """Retrieve full hierarchical skill taxonomy tree (ESCO & O*NET)."""
+    tree = get_taxonomy_tree(db=db)
     total_nodes = sum(1 + len(cat.children) for cat in tree)
     return TaxonomyListResponse(categories=tree, total_nodes=total_nodes)
 
 
+@router.post("/normalize", response_model=SkillNormalizeResponse)
 @router.post("/taxonomy/normalize", response_model=SkillNormalizeResponse)
-def normalize_skills_endpoint(
+def normalize_skill_batch(
     body: SkillNormalizeRequest,
     db: Session = Depends(get_sync_db),
 ):
-    """
-    Normalize raw skill names to canonical ESCO / O*NET entities with taxonomy categories.
-    """
+    """Batch normalize raw skill strings to canonical ESCO concepts."""
     results = normalize_skills(body.skills, db=db)
     return SkillNormalizeResponse(normalized=results)
 
@@ -156,9 +151,10 @@ def get_trends(
     days: int = Query(30, ge=7, le=90, description="Time series window in days"),
     limit: int = Query(5, ge=1, le=10, description="Number of top technologies"),
     skill: Optional[str] = Query(None, description="Specific technology to isolate"),
+    region: Optional[str] = Query(None, description="Optional region filter"),
 ):
     """Retrieve technology demand time-series trend curves."""
-    result = get_technology_trends(days=days, limit=limit, skill=skill)
+    result = get_technology_trends(days=days, limit=limit, skill=skill, region=region)
     return result
 
 

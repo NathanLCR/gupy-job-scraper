@@ -61,11 +61,29 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS Middleware
+# CORS Middleware Configuration
+def _get_cors_origins():
+    import json
+    raw = settings.CORS_ORIGINS
+    if isinstance(raw, list):
+        return raw
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+    except Exception:
+        pass
+    if isinstance(raw, str):
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return ["http://localhost:8000", "http://127.0.0.1:8000"]
+
+
+cors_origins = _get_cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.pages\.dev",
     allow_methods=["*"],
     allow_headers=["*"],
 )
