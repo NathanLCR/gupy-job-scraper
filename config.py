@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "SkillPulse AI"
+    PROJECT_NAME: str = "SkillPulse"
     VERSION: str = "1.0.0"
     API_V1_PREFIX: str = "/api/v1"
 
@@ -37,14 +37,31 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3.1"
 
-    # Dense Embeddings (In-Memory CPU SentenceTransformers)
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+    # Cloudflare Workers AI & Edge Embeddings
+    CF_ACCOUNT_ID: Optional[str] = None
+    CF_API_TOKEN: Optional[str] = None
+    CF_EMBEDDING_MODEL: str = "@cf/baai/bge-small-en-v1.5"
+
+    # Dense Embeddings (Cloudflare Workers AI BGE-small / SentenceTransformers)
+    EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     EMBEDDING_DIM: int = 384
 
     # Batch Extraction Engine & Rate-Limit Settings
     EXTRACTION_BATCH_SIZE: int = 15
     EXTRACTION_RATE_LIMIT_DELAY: float = 2.0
     EXTRACTION_BACKOFF_SECONDS: float = 2.0
+
+    # Public API Rate Limiting (Requests per minute per client IP)
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_SEARCH_RPM: int = 60
+    RATE_LIMIT_MATCH_RPM: int = 20
+    RATE_LIMIT_EXPLAIN_RPM: int = 5
+    RATE_LIMIT_EXTRACT_RPM: int = 10
+
+    # Admin & Operator Console Security
+    ADMIN_API_KEY: str = "skillpulse-admin-secret"
+    ADMIN_AUTH_ENABLED: bool = True
+    ADMIN_SESSION_COOKIE: str = "skillpulse_admin_token"
 
     # App environment, CORS & port
     ENVIRONMENT: str = "development"

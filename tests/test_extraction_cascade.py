@@ -319,10 +319,16 @@ class TestExtractAPIEndpoints:
         assert data["tier_used"] in ("tier1_regex", "tier1_tier2_cascade")
 
     def test_batch_extraction_cascade_trigger(self):
-        res = client.post("/api/v1/extract/batch?engine=cascade&limit=5")
+        # 1. Unauthenticated should fail
+        unauth_res = client.post("/api/v1/extract/batch?engine=cascade&limit=5")
+        assert unauth_res.status_code == 401
+
+        # 2. Authenticated with admin key should succeed
+        headers = {"X-Admin-Key": "skillpulse-admin-secret"}
+        res = client.post("/api/v1/extract/batch?engine=cascade&limit=5", headers=headers)
         assert res.status_code == 202
         assert res.json()["engine"] == "cascade"
 
-        status_res = client.get("/api/v1/extract/status?engine=cascade")
+        status_res = client.get("/api/v1/extract/status?engine=cascade", headers=headers)
         assert status_res.status_code == 200
         assert "running" in status_res.json()

@@ -34,6 +34,7 @@ from services.taxonomy_service import (
 router = APIRouter(prefix="/analytics", tags=["Market Analytics & Graph"])
 
 
+@router.get("/overview", response_model=SkillAnalyticsResponse)
 @router.get("/skills", response_model=SkillAnalyticsResponse)
 def get_skills_analytics(
     region: Optional[str] = Query(None, description="Filter analytics by region"),

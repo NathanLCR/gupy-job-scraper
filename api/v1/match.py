@@ -9,6 +9,8 @@ from schemas import (
     CandidateMatchResponse,
     CandidateProfileCreate,
     CandidateProfileResponse,
+    SkillGapExplanationRequest,
+    SkillGapExplanationResponse,
 )
 from services.matcher_service import CandidateMatcherService
 
@@ -59,6 +61,46 @@ def match_candidate_cv(
         )
 
 
+@router.post("/explain", response_model=SkillGapExplanationResponse)
+def explain_candidate_match(
+    request: SkillGapExplanationRequest,
+    db: Session = Depends(get_sync_db),
+):
+    """
+    Generate an actionable AI narrative explanation for why a candidate received their fit score
+    against a specific job posting, detailing strengths, gaps, and upskilling advice.
+    """
+    resume_text = request.resume_text
+
+    if not resume_text and request.profile_id:
+        profile = db.get(CandidateProfile, request.profile_id)
+        if not profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Candidate profile {request.profile_id} not found",
+            )
+        resume_text = profile.raw_resume_text
+
+    if not resume_text or not resume_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Resume text or valid profile_id is required",
+        )
+
+    try:
+        explanation = CandidateMatcherService.explain_fit_and_gaps(
+            resume_text=resume_text,
+            job_id=request.job_id,
+            db=db,
+        )
+        return explanation
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND if "not found" in str(exc).lower() else status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+
 @router.post("/profile", response_model=CandidateProfileResponse, status_code=status.HTTP_201_CREATED)
 def create_candidate_profile(
     profile_in: CandidateProfileCreate,
@@ -95,3 +137,4 @@ def get_candidate_profile(
             detail=f"Candidate profile {id} not found",
         )
     return profile.to_dict()
+

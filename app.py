@@ -1,11 +1,12 @@
 from contextlib import asynccontextmanager
 import os
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from api.v1.auth import require_admin_auth
 from api.v1.router import api_v1_router
 from config import settings
 from database import init_db
@@ -53,8 +54,8 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description=(
-        "**SkillPulse AI** — Labor Market Intelligence, Multi-Tier AI Skill Extraction, "
-        "Canonical Taxonomy Normalization (ESCO / O*NET), and Semantic Candidate Matcher with pgvector."
+        "**SkillPulse** — Labor Market Intelligence, Canonical Taxonomy Normalization (ESCO / O*NET), "
+        "and Explainable Semantic Candidate Matcher with PostgreSQL and pgvector."
     ),
     lifespan=lifespan,
     docs_url="/docs",
@@ -88,6 +89,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ─── Public API Rate Limiting Middleware ─────────────────────────────────────
+import time
+from collections import defaultdict
+
+_RATE_LIMIT_STORE: dict[str, list[float]] = defaultdict(list)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """
+    Protects public cloud endpoints and AI services against quota exhaustion.
+    Enforces sliding-window rate limits per client IP on POST endpoints.
+    """
+    if not settings.RATE_LIMIT_ENABLED:
+        return await call_next(request)
+
+    path = request.url.path
+    limit = None
+
+    if path.startswith(f"{settings.API_V1_PREFIX}/match/explain"):
+        limit = settings.RATE_LIMIT_EXPLAIN_RPM
+    elif path.startswith(f"{settings.API_V1_PREFIX}/match"):
+        limit = settings.RATE_LIMIT_MATCH_RPM
+    elif path.startswith(f"{settings.API_V1_PREFIX}/extract"):
+        limit = settings.RATE_LIMIT_EXTRACT_RPM
+    elif path.startswith(f"{settings.API_V1_PREFIX}/jobs/search"):
+        limit = settings.RATE_LIMIT_SEARCH_RPM
+
+    if limit is not None and request.method == "POST":
+        client_ip = (
+            request.headers.get("cf-connecting-ip")
+            or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or (request.client.host if request.client else "127.0.0.1")
+        )
+        key = f"{client_ip}:{path}"
+        now = time.time()
+        window = 60.0
+
+        # Filter out timestamps older than window
+        timestamps = [t for t in _RATE_LIMIT_STORE[key] if now - t < window]
+        if len(timestamps) >= limit:
+            retry_after = max(1, int(window - (now - timestamps[0])) + 1)
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={
+                    "detail": "Rate limit exceeded on public endpoint. Please try again shortly.",
+                    "retry_after_seconds": retry_after,
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
+        timestamps.append(now)
+        _RATE_LIMIT_STORE[key] = timestamps
+
+    return await call_next(request)
+
+
 # Include v1 RESTful API router
 app.include_router(api_v1_router, prefix=settings.API_V1_PREFIX)
 
@@ -112,6 +169,16 @@ def dashboard():
     return JSONResponse({"message": "SkillPulse AI Backend Running. Visit /docs for OpenAPI specifications."})
 
 
+@app.get("/admin", include_in_schema=False)
+@app.get("/admin/{full_path:path}", include_in_schema=False)
+def admin_console(full_path: str = ""):
+    admin_file = os.path.join(frontend_dir, "admin.html")
+    if os.path.exists(admin_file):
+        return FileResponse(admin_file)
+    index_file = os.path.join(frontend_dir, "index.html")
+    return FileResponse(index_file)
+
+
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
 def health_check():
     """Health check endpoint confirming API availability and database connectivity."""
@@ -129,16 +196,16 @@ def apidocs_redirect():
     return RedirectResponse(url="/docs")
 
 
-@app.post("/database/init", tags=["Database"])
+@app.post("/database/init", tags=["Database"], dependencies=[Depends(require_admin_auth)])
 def initialize_database():
     """Manually initialize or verify database table schemas."""
     init_db()
     return {"message": "Database initialized"}
 
 
-# ─── Legacy & Backward Compatibility Endpoints ────────────────────────────────
+# ─── Legacy & Backward Compatibility Endpoints (Protected) ────────────────────
 
-@app.post("/scrape/start", tags=["Scraper"])
+@app.post("/scrape/start", tags=["Scraper"], dependencies=[Depends(require_admin_auth)])
 def legacy_start_scrape():
     start_scrape_thread()
     return JSONResponse(
@@ -147,12 +214,12 @@ def legacy_start_scrape():
     )
 
 
-@app.get("/scrape/status", tags=["Scraper"])
+@app.get("/scrape/status", tags=["Scraper"], dependencies=[Depends(require_admin_auth)])
 def legacy_scrape_status():
     return get_scrape_status()
 
 
-@app.get("/errors", tags=["Errors"])
+@app.get("/errors", tags=["Errors"], dependencies=[Depends(require_admin_auth)])
 def legacy_errors(
     search: Optional[str] = Query(None),
     source: Optional[str] = Query(None),
@@ -193,7 +260,7 @@ def legacy_job_posts(
     )
 
 
-@app.get("/job-posts/export", tags=["Job posts"])
+@app.get("/job-posts/export", tags=["Job posts"], dependencies=[Depends(require_admin_auth)])
 def legacy_export_job_posts():
     csv_data = export_job_posts_csv()
     return Response(
@@ -232,7 +299,7 @@ def legacy_jobs(
     )
 
 
-@app.get("/jobs/export", tags=["Jobs"])
+@app.get("/jobs/export", tags=["Jobs"], dependencies=[Depends(require_admin_auth)])
 def legacy_export_jobs():
     csv_data = export_jobs_csv()
     return Response(

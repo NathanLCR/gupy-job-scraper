@@ -522,3 +522,31 @@ def test_hybrid_search_faceted_filters_advanced():
     finally:
         db.close()
 
+
+def test_matcher_explainability_and_summary():
+    """Verify explainable score points (out of 50/20/30), match_reason, and candidate_summary."""
+    db = SessionLocal()
+    try:
+        resume = "Senior Python Engineer with 6 years experience in FastAPI, Docker, Kubernetes, and PostgreSQL."
+        result = CandidateMatcherService.match_resume(resume_text=resume, db=db, limit=5)
+        assert "candidate_summary" in result
+        summary = result["candidate_summary"]
+        assert "overall_fit_score" in summary
+        assert "strongest_areas" in summary
+        assert len(summary["strongest_areas"]) >= 3
+        assert "largest_gaps" in summary
+
+        for match in result["matches"]:
+            assert "hard_points" in match
+            assert "soft_points" in match
+            assert "vector_points" in match
+            assert "total_points" in match
+            assert "match_reason" in match
+            assert isinstance(match["match_reason"], str)
+            assert len(match["match_reason"]) > 10
+            # Total points should match fit score
+            assert math.isclose(match["total_points"], match["fit_score"], abs_tol=0.2)
+    finally:
+        db.close()
+
+

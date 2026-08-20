@@ -20,7 +20,7 @@ def test_openapi_docs():
     openapi_res = client.get("/openapi.json")
     assert openapi_res.status_code == 200
     openapi_data = openapi_res.json()
-    assert openapi_data["info"]["title"] == "SkillPulse AI"
+    assert "SkillPulse" in openapi_data["info"]["title"]
 
 
 def test_extract_endpoint():
@@ -107,14 +107,37 @@ def test_analytics_graph_endpoint():
     assert "edges" in data
 
 
+def test_admin_auth_flow():
+    # 1. Unauthenticated request to protected endpoint should fail with 401
+    unauth_res = client.get("/api/v1/errors")
+    assert unauth_res.status_code == 401
+
+    # 2. Invalid credentials should fail with 401
+    login_fail = client.post("/api/v1/admin/login", json={"key": "wrong-key"})
+    assert login_fail.status_code == 401
+
+    # 3. Valid login should return token
+    login_ok = client.post("/api/v1/admin/login", json={"key": "skillpulse-admin-secret"})
+    assert login_ok.status_code == 200
+    assert login_ok.json()["status"] == "ok"
+    assert "token" in login_ok.json()
+
+    # 4. Authenticated request with header should succeed
+    auth_headers = {"X-Admin-Key": "skillpulse-admin-secret"}
+    verify_res = client.get("/api/v1/admin/verify", headers=auth_headers)
+    assert verify_res.status_code == 200
+    assert verify_res.json()["status"] == "authenticated"
+
+
 def test_search_terms_crud():
-    # 1. Create a search term
+    headers = {"X-Admin-Key": "skillpulse-admin-secret"}
+    # 1. Create a search term (requires admin auth)
     term_payload = {"term": "Rust Developer", "is_active": True}
-    res = client.post("/api/v1/search-terms", json=term_payload)
+    res = client.post("/api/v1/search-terms", json=term_payload, headers=headers)
     assert res.status_code in [201, 400]  # 400 if already exists in test DB
 
     # 2. List search terms
-    list_res = client.get("/api/v1/search-terms?page=1&page_size=20")
+    list_res = client.get("/api/v1/search-terms?page=1&page_size=20", headers=headers)
     assert list_res.status_code == 200
     assert len(list_res.json()["items"]) > 0
 
@@ -124,24 +147,24 @@ def test_stats_and_errors_endpoints():
     assert stats_res.status_code == 200
     assert "jobs_count" in stats_res.json()
 
-    errors_res = client.get("/api/v1/errors")
+    headers = {"X-Admin-Key": "skillpulse-admin-secret"}
+    errors_res = client.get("/api/v1/errors", headers=headers)
     assert errors_res.status_code == 200
     assert "items" in errors_res.json()
 
 
-def test_legacy_backward_compatibility():
-    # Legacy /jobs
-    res = client.get("/jobs")
-    assert res.status_code == 200
+def test_frontend_routes():
+    # Public candidate dashboard
+    res_dash = client.get("/dashboard")
+    assert res_dash.status_code == 200
+    assert "text/html" in res_dash.headers["content-type"]
+    assert "SkillPulse" in res_dash.text
+    assert "Candidate Match" in res_dash.text
 
-    # Legacy /job-posts
-    res_posts = client.get("/job-posts")
-    assert res_posts.status_code == 200
+    # Protected operator console
+    res_admin = client.get("/admin")
+    assert res_admin.status_code == 200
+    assert "text/html" in res_admin.headers["content-type"]
+    assert "Operator" in res_admin.text
 
-    # Legacy /stats
-    res_stats = client.get("/stats")
-    assert res_stats.status_code == 200
 
-    # Legacy /search-terms
-    res_terms = client.get("/search-terms")
-    assert res_terms.status_code == 200

@@ -1,219 +1,211 @@
 <div align="center">
 
-# SkillPulse AI ⚡
-### Labor Market Intelligence, Multi-Provider Cloud AI Cascade & Semantic Talent Matcher
+# SkillPulse
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![pgvector](https://img.shields.io/badge/pgvector-HNSW_384d-blue?style=for-the-badge)](https://github.com/pgvector/pgvector)
-[![Cloudflare](https://img.shields.io/badge/Cloudflare_Pages-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://pages.cloudflare.com/)
-[![Groq](https://img.shields.io/badge/Groq-Llama_3.3_70B-f55036?style=for-the-badge)](https://groq.com/)
-[![OpenRouter](https://img.shields.io/badge/OpenRouter-Free_Models-6366f1?style=for-the-badge)](https://openrouter.ai/)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+### Labor market intelligence and semantic job matching for software professionals.
+
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-316192?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![pgvector](https://img.shields.io/badge/pgvector-384d_HNSW-blue?style=flat)](https://github.com/pgvector/pgvector)
+[![Tests](https://img.shields.io/badge/Tests-108_Passing-10b981?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-slate.svg?style=flat)](https://opensource.org/licenses/MIT)
 
 <br/>
 
-**Live Showcase**: [https://skillpulse.pages.dev](https://skillpulse.pages.dev) · **API Documentation**: `/docs` (Interactive OpenAPI Swagger)
+**[Live Demo](https://skillpulse.pages.dev)** · **[Architecture](#system-architecture)** · **[API Reference](/docs)** · **[Quickstart](#quickstart--local-setup)**
 
 </div>
 
 ---
 
-## 1. Executive Summary & Vision
+## What does SkillPulse do?
 
-**SkillPulse AI** is an open-source labor market intelligence platform and candidate semantic matching engine designed for public cloud deployment on a **100% free-tier architecture**. It ingests job postings across global regions (Europe, Latin America, North America), extracts structured entity attributes through a high-performance multi-tier AI cascade (Regex Trie $\to$ Contextual NER $\to$ Cloud LLM Router), canonicalizes skills against standardized taxonomies (**ESCO** / **O*NET**), and provides a weighted hybrid search and candidate fit analysis engine powered by **pgvector (384-dimensional dense embeddings)**.
+**SkillPulse** analyzes software job postings across European and Latin American markets, extracts and normalizes required technical competencies using canonical taxonomies (**ESCO** / **O*NET**), and combines full-text lexical ranking with 384-dimensional dense vector embeddings (**pgvector**) to measure explainable candidate-job fit and identify high-ROI skill gaps.
 
----
+```text
+Nathan — Backend → AI Engineer
 
-## 2. Target System Architecture
+Market Fit
+████████████████░░ 88%
 
-```
-                                  ┌─────────────────────────────────────────────────────────┐
-                                  │             Cloudflare Global Edge Network              │
-                                  │         (DNS Proxy · Free SSL · DDoS Shield)            │
-                                  └────────────────────────────┬────────────────────────────┘
-                                                               │
-                              ┌────────────────────────────────┴────────────────────────────────┐
-                              ▼                                                                 ▼
-┌───────────────────────────────────────────────────────────┐     ┌───────────────────────────────────────────────────────────┐
-│              Cloudflare Pages (Frontend SPA)              │     │              FastAPI Backend Gateway                      │
-│                                                           │     │                                                           │
-│  - Market Analytics (Metrics, Trends, Top Tech)           │────▶│  - /api/v1/jobs        - /api/v1/match                    │
-│  - Structured Job Explorer & DB Filters                   │     │  - /api/v1/analytics   - /api/v1/extract                  │
-│  - 1-Click Recruiter Demo Personas                        │     │  - In-Memory SentenceTransformers (384-d MiniLM CPU)      │
-└───────────────────────────────────────────────────────────┘     └─────────────────────────────┬─────────────────────────────┘
-                                                                                                │
-                                                    ┌───────────────────────────────────────────┴───────────────────────────┐
-                                                    ▼                                                                       ▼
-┌───────────────────────────────────────────────────────────┐                             ┌─────────────────────────────────────────────────────────┐
-│           Multi-Provider Free Cloud AI Router             │                             │          PostgreSQL 16 Storage Layer (`pgvector`)       │
-│                                                           │                             │                                                         │
-│  Tier 1: High-Speed Aho-Corasick / Regex (<5ms)           │                             │  - Relational Schema: Jobs, Skills, Taxonomies          │
-│  Tier 2: Token Classifier Contextual NER (~30ms)          │                             │  - Vector Column: embedding vector(384)                 │
-│  Tier 3: Free Cloud LLM (Groq 30 RPM / OpenRouter 20 RPM) │                             │  - Indexing: HNSW (m=16, ef_construction=64)            │
-│  Engine: Chunked Batch Slicer + 429 Exponential Backoff   │                             │  - Hybrid Search: Reciprocal Rank Fusion (RRF)          │
-└───────────────────────────────────────────────────────────┘                             └─────────────────────────────────────────────────────────┘
+Strongest areas
+Backend Engineering        96%
+Databases & Storage        91%
+Cloud / DevOps             82%
+Machine Learning & AI      64%
+Frontend & Web             58%
+
+Largest gaps
+○ Kubernetes
+○ MLOps
+○ LLM evaluation
+○ AWS Bedrock
 ```
 
 ---
 
-## 3. Key Technical Highlights
+## Core Capabilities
 
-### ⚡ 1. Multi-Provider Cloud AI Router
-Replaces expensive proprietary models or heavy local servers with an intelligent free cloud router:
-* **Primary**: **Groq API** (`llama-3.3-70b-versatile`, sub-200ms latency, 30 RPM free).
-* **Secondary**: **OpenRouter Free Tier** (`meta-llama/llama-3.3-70b-instruct:free`, 20 RPM).
-* **Failover Engine**: Inspects HTTP `Retry-After` headers on `429 Too Many Requests`, executes exponential backoff with jitter, and fails over gracefully to deterministic Tier 1 Aho-Corasick matching.
-
-### 🧠 2. Hybrid Search (Reciprocal Rank Fusion)
-Combines lexical precision with semantic depth in PostgreSQL 16:
-* **Dense Retrieval**: 384-dimensional embeddings generated in-memory on CPU via `sentence-transformers/all-MiniLM-L6-v2` queried via pgvector HNSW indexing (`<#>` / `<=>`).
-* **Sparse Lexical Search**: Full-text keyword matching (`tsvector` & BM25 ranking).
-* **RRF Scoring ($k=60$)**:
-  $$\text{RRF Score}(d) = \sum_{m \in \{\text{dense}, \text{sparse}\}} \frac{w_m}{k + \text{rank}_m(d)}$$
-
-### 🎯 3. Weighted Candidate Matcher & 1-Click Demo Personas
-* **Composite Fit Scoring**:
+### 1. 1-Click Candidate Matcher (Hero Feature)
+* **Instant Evaluation**: Test candidate resumes or 1-click software personas (*Backend Developer*, *Junior AI Engineer*, *Full-stack Developer*, *Senior Cloud Architect*).
+* **Explainable Fit Scoring**: Decomposes the composite match score into transparent, defensible components:
   $$\text{Fit Score} = 50\% \times \text{Hard Skill Overlap} + 20\% \times \text{Soft Skill Overlap} + 30\% \times \text{Dense Vector Similarity}$$
-* **Interactive 1-Click Recruiter Personas**:
-  1. 🚀 **Senior Cloud & Backend Architect** (Kubernetes, Docker, AWS, Go, Python, PostgreSQL).
-  2. 🤖 **AI / ML Engineer & RAG Specialist** (PyTorch, Hugging Face, LangChain, pgvector).
-  3. 💻 **Junior Fullstack Developer** (React, TypeScript, Node.js, SQL, TailwindCSS).
-* **Visual Breakdown**: Animated radial SVG fit gauge, matched skills in emerald green, missing critical requirements in rose red, and recommended high-ROI upskilling paths in amber.
+* **Point Breakdown**: Exposes granular points ($44.0 / 50$ Hard Skills + $18.0 / 20$ Soft Skills + $26.0 / 30$ Semantic Sim = $88.0 / 100$) rather than an opaque black-box number.
+* **Skill Gap Analysis**: Identifies exact missing requirements (e.g. `Kubernetes`, `AWS Bedrock`) and recommends high-ROI upskilling targets ranked by market frequency.
 
-### 🌐 4. Zero Cloud Cost Architecture
-* **Frontend**: Cloudflare Pages (Free unlimited static hosting & global CDN).
-* **Backend**: FastAPI container on Render / Hugging Face Spaces free tier.
-* **Database**: Neon Serverless PostgreSQL with native `pgvector` extension.
+### 2. Job Explorer & Hybrid Search
+* **Natural Language Queries**: Search vacancies using semantic phrases such as `"backend AI engineer working with Python and LLMs"`.
+* **Reciprocal Rank Fusion (RRF, $k=60$)**: Combines PostgreSQL full-text keyword retrieval with dense vector cosine similarity (`all-MiniLM-L6-v2` 384-d embeddings) stored in `pgvector`.
+* **Explainability Rationale**: Every search result surfaces why it matched, including matched skills (✓) and missing skills (○).
 
----
-
-## 4. Repository Layout
-
-```
-├── api/
-│   └── v1/                   # RESTful API Endpoints (jobs, match, extract, analytics)
-├── config.py                 # Pydantic Settings & Environment Loader
-├── database.py               # SQLAlchemy 2.0 Engine & Session Factory
-├── entities/                 # Normalized Relational Models & pgvector Columns
-│   ├── job.py                # Processed vacancy record (embedding vector(384))
-│   ├── candidate_profile.py  # Candidate CV record
-│   ├── taxonomy_node.py      # ESCO / O*NET canonical hierarchy
-│   └── associations.py       # Many-to-many junction tables
-├── features_extractors/      # Multi-Tier Cascade Extractors
-│   ├── regex_extractor.py    # Tier 1: Aho-Corasick Trie & 300+ regex patterns
-│   ├── bert_extractor.py     # Tier 2: JobBERT Contextual NER
-│   └── llm_extractor.py      # Tier 3: Free Cloud AI Router (Groq & OpenRouter)
-├── frontend/                 # Responsive Single Page Application (SPA)
-│   ├── index.html            # Dashboard & Candidate Matcher Views
-│   ├── script.js             # Client controller, demo personas & SVG gauge
-│   └── style.css             # Glassmorphic dark styling system
-├── services/                 # Core Business Logic
-│   ├── matcher_service.py    # Candidate fit computation & gap analysis
-│   ├── hybrid_search_service.py # Reciprocal Rank Fusion search engine
-│   ├── embedding_service.py  # MiniLM CPU embeddings & cosine distance
-│   └── taxonomy_service.py   # ESCO canonical skill normalization
-├── tests/                    # Pytest Unit & Integration Test Suite
-├── docs/                     # Full Technical Architecture & Deployment Specs
-├── Dockerfile                # Production Container Image
-├── docker-compose.yml        # Multi-Container Local Dev Stack
-├── requirements.txt          # Python Dependencies
-└── README.md
-```
+### 3. Labor Market Overview & Analytics
+* **Continuous Vacancy Intelligence**: Aggregates structured vacancies across Ireland, UK, Europe, and Latin America.
+* **Skill Frequency Distributions**: Real-time tracking of top demanded technologies (Python 38%, AWS 29%, React 24%, Docker 22%, PostgreSQL 20%).
+* **Emerging Tech & Workplace Models**: Identifies high-velocity technologies (`FastAPI`, `LLM`, `Terraform`, `pgvector`) and remote/hybrid/onsite breakdowns.
 
 ---
 
-## 5. Quickstart & Local Setup
+## System Architecture
+
+SkillPulse is engineered with a **production-oriented architecture** that decouples multi-source data ingestion, cascade feature extraction, canonical taxonomy mapping, and hybrid vector retrieval.
+
+```text
+                JOB SOURCES
+                    │
+        ┌───────────┴───────────┐
+      Arbeitnow   Remotive    Himalayas   RemoteOK    Gupy
+                    │
+                    ▼
+            Extraction Cascade Pipeline
+        ┌───────────┼───────────┐
+    Tier 1: Trie   Tier 2: NER  Tier 3: Cloud LLM Router
+  (Aho-Corasick)  (Contextual)  (Groq Llama 3.3 / OpenRouter)
+                    │
+                    ▼
+           Skill Normalization
+        ESCO / O*NET Canonical Graph
+                    │
+                    ▼
+            PostgreSQL 16 Storage Layer
+       pgvector (384-d MiniLM Embeddings)
+                    │
+             ┌──────┴──────┐
+       PostgreSQL Lexical  Dense Vector
+          (Full-Text)      (HNSW Cosine)
+             └──────┬──────┘
+                    ▼
+      Reciprocal Rank Fusion (RRF, k=60)
+                    │
+                    ▼
+         Explainable Matching Engine
+  Fit = 50% Hard Skill + 20% Soft Skill + 30% Semantic Similarity
+```
+
+### Engineering Highlights
+
+* **Multi-Source Ingestion**: Modular adapter architecture collecting vacancies across international job portals.
+* **Multi-Stage Extraction Cascade**: High-speed deterministic Trie matching for canonical terms, contextual token classification for experience/seniority, and cloud LLM routing for unstructured descriptions.
+* **ESCO / O\*NET Taxonomy Normalization**: Maps thousands of raw skill aliases (e.g. `reactjs` $\to$ `React`, `postgres` $\to$ `PostgreSQL`, `k8s` $\to$ `Kubernetes`) to a structured semantic graph.
+* **PostgreSQL + pgvector Hybrid Retrieval**: Merges PostgreSQL full-text retrieval with dense vector similarity via Reciprocal Rank Fusion (RRF).
+* **Automated Test Suite**: 108 unit and integration tests across data models, extraction pipelines, search algorithms, and API endpoints.
+
+---
+
+## Technology Stack
+
+| Layer | Technologies |
+| :--- | :--- |
+| **Backend & API** | FastAPI, Python 3.11+, Pydantic v2, Uvicorn |
+| **Database & Vectors** | PostgreSQL 16, pgvector (HNSW Indexing), SQLAlchemy 2.0, Alembic |
+| **Embeddings & NLP** | `sentence-transformers/all-MiniLM-L6-v2` (384-d), ESCO / O*NET Graph |
+| **Cloud AI Router** | Groq (`llama-3.3-70b-versatile`), OpenRouter API (Failover with backoff) |
+| **Frontend UI** | Modern Vanilla JS/HTML5/CSS3 (Product-first design, 0 heavy frameworks) |
+| **Quality & Tests** | `pytest`, `pytest-asyncio`, `httpx` (108 automated tests) |
+
+---
+
+## Quickstart & Local Setup
 
 ### Prerequisites
 * Python 3.11+ or 3.12
-* (Optional) Docker & Docker Compose
+* Git
 
 ### 1. Clone & Configure Environment
 
 ```bash
-git clone https://github.com/NathanLCR/skillpulse-ai.git
-cd skillpulse-ai
+git clone https://github.com/NathanLCR/gupy-job-scraper.git
+cd gupy-job-scraper
 
-# Copy example environment configuration
-cp .env.example .env
-```
-
-Edit `.env` and add your free API keys:
-```env
-GROQ_API_KEY="gsk_your_free_groq_api_key"
-OPENROUTER_API_KEY="sk-or-v1-your_free_openrouter_api_key"
-DATABASE_URL="sqlite:///jobs.db"
-```
-
-### 2. Install Dependencies & Run Locally
-
-```bash
 # Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install requirements
+# Install dependencies
 pip install -r requirements.txt
+```
 
-# Start the FastAPI server
+### 2. Configure Environment Variables
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` as needed:
+```env
+DATABASE_URL="sqlite:///jobs.db"
+GROQ_API_KEY="your_groq_api_key"
+OPENROUTER_API_KEY="your_openrouter_api_key"
+PORT=8000
+```
+
+### 3. Run Automated Tests
+
+```bash
+pytest
+```
+*Expected: 108 passed tests in ~2 seconds.*
+
+### 4. Start the Application
+
+```bash
 uvicorn app:app --reload --port 8000
 ```
 
-Visit the application in your browser:
-* **Web UI Dashboard & Candidate Matcher**: `http://localhost:8000/dashboard`
-* **Interactive OpenAPI Swagger Docs**: `http://localhost:8000/docs`
+Open your browser at:
+* **Product Interface**: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+* **OpenAPI Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
-## 6. Docker Compose Setup
+## API Reference
 
-Run the full stack (PostgreSQL 16 + pgvector, Redis, Celery, and FastAPI) locally:
-
-```bash
-docker-compose up -d --build
-```
-
-Access the service at `http://localhost:8080`.
-
----
-
-## 7. Cloud Deployment Guide
-
-### Deploying Frontend to Cloudflare Pages (Free)
-1. Log in to [Cloudflare Dashboard](https://dash.cloudflare.com/) $\to$ **Workers & Pages** $\to$ **Create application** $\to$ **Pages**.
-2. Connect your GitHub repository.
-3. Configure build settings:
-   * **Framework preset**: None
-   * **Build command**: Leave empty
-   * **Build output directory**: `frontend`
-4. Click **Save and Deploy**. Your frontend is live globally on `https://skillpulse.pages.dev`.
-
-### Deploying Backend to Render (Free)
-1. Create a **New Web Service** on [render.com](https://render.com).
-2. Connect your repository.
-3. Set environment variables:
-   * `DATABASE_URL`: `postgresql://user:pass@ep-xyz.neon.tech/neondb?sslmode=require`
-   * `GROQ_API_KEY`: `${YOUR_GROQ_API_KEY}`
-   * `OPENROUTER_API_KEY`: `${YOUR_OPENROUTER_API_KEY}`
-   * `CORS_ORIGINS`: `["https://skillpulse.pages.dev", "http://localhost:8000"]`
-4. Set **Start Command**: `uvicorn app:app --host 0.0.0.0 --port $PORT`.
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/v1/match` | Candidate CV-to-job matching, explainable scoring & skill gap analysis |
+| `POST` | `/api/v1/jobs/search/hybrid` | Reciprocal Rank Fusion (RRF) hybrid search across vacancies |
+| `GET` | `/api/v1/jobs` | Paginated structured vacancies with multi-region and taxonomy filters |
+| `POST` | `/api/v1/jobs/ingest` | Trigger background ingestion across public feeds |
+| `POST` | `/api/v1/extract` | Extract entities using multi-stage cascade |
+| `GET` | `/api/v1/analytics/overview` | Real-time market analytics, skill demand & workplace mix |
+| `GET` | `/api/v1/analytics/trends` | 30-day technology frequency timelines |
+| `GET` | `/health` | System health check and database connectivity confirmation |
 
 ---
 
-## 8. Running Automated Tests
+## Project History & Evolution
 
-Run the complete test suite:
+This project originally originated as an academic Python assignment (CA2) focused on scraping vacancy listings from Gupy and storing them in SQLite.
 
-```bash
-pytest -v
-```
-
-All 84+ unit and integration tests validate the Cloud AI Router, Aho-Corasick trie matching, JobBERT NER extraction, ESCO taxonomy mapping, pgvector hybrid search, and candidate gap calculation.
+Throughout development, each component was re-architected toward production standards:
+* **Scraper $\to$ Multi-Source Ingestion Engine**: Expanded from a single site scraper into a modular adapter system ingesting European and Latin American job boards.
+* **Regex Keywords $\to$ Extraction Cascade**: Replaced basic substring searches with a multi-tier cascade combining Aho-Corasick Trie matching, contextual token NER, and LLM extraction routing.
+* **Raw Strings $\to$ Canonical Skill Taxonomy**: Implemented normalization against international labor taxonomies (**ESCO** / **O*NET**).
+* **Keyword Filtering $\to$ Hybrid Retrieval**: Added dense vector embeddings (`all-MiniLM-L6-v2`), `pgvector` indexing, and Reciprocal Rank Fusion (RRF).
+* **Static Job Board $\to$ Candidate Intelligence Platform**: Evolved into **SkillPulse**, providing explainable fit scoring, domain competency breakdown, and actionable skill-gap recommendations.
 
 ---
 
-## 9. License
+## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

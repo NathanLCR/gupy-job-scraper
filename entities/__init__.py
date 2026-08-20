@@ -7,6 +7,7 @@ from entities.error_log import ErrorLog
 from entities.hard_skill import HardSkill
 from entities.job import Job
 from entities.job_post import JobPost
+from entities.llm_extraction_cache import LLMExtractionCache
 from entities.nice_to_have_skill import NiceToHaveSkill
 from entities.search_term import SearchTerm
 from entities.skill_alias import SkillAlias
@@ -25,6 +26,7 @@ __all__ = [
     "HardSkill",
     "Job",
     "JobPost",
+    "LLMExtractionCache",
     "NiceToHaveSkill",
     "SearchTerm",
     "SkillAlias",

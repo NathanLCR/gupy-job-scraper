@@ -32,6 +32,8 @@ from schemas.matcher import (
     CandidateProfileResponse,
     JobMatchItem,
     SkillGapAnalysis,
+    SkillGapExplanationRequest,
+    SkillGapExplanationResponse,
 )
 from schemas.analytics import (
     ClusterInfo,

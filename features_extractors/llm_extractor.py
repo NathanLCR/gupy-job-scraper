@@ -4,6 +4,7 @@ Multi-provider free LLM orchestration (Groq Llama 3.3 70B & OpenRouter Free Tier
 with JSON schema enforcement, dynamic 429 exponential backoff, and zero-fail fallback.
 """
 
+import hashlib
 import json
 import logging
 import random
@@ -187,6 +188,94 @@ def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
                     continue
     return None
 
+# In-memory LRU cache for extractions (capped at 5,000 items)
+_MEMORY_CACHE: Dict[str, Dict[str, Any]] = {}
+_MAX_MEMORY_CACHE_SIZE = 5000
+
+
+def compute_extraction_fingerprint(
+    text: str,
+    prompt_version: str = "v1.0",
+    schema_type: str = "job",
+) -> str:
+    """
+    Generate SHA-256 fingerprint for caching LLM extractions.
+    Formula: sha256(schema_type + '::' + prompt_version + '::' + normalized_text)
+    """
+    normalized = re.sub(r"\s+", " ", (text or "").strip().lower())
+    seed = f"{schema_type}::{prompt_version}::{normalized}"
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+def get_cached_extraction(fingerprint: str, db: Optional[Any] = None) -> Optional[Dict[str, Any]]:
+    """
+    Lookup extraction in memory cache and persistent database cache.
+    """
+    if fingerprint in _MEMORY_CACHE:
+        return _MEMORY_CACHE[fingerprint]
+
+    # Database lookup
+    try:
+        from database import SessionLocal
+        from entities.llm_extraction_cache import LLMExtractionCache
+
+        session = db if db is not None else SessionLocal()
+        should_close = db is None
+        try:
+            cached_row = session.query(LLMExtractionCache).filter(LLMExtractionCache.fingerprint == fingerprint).first()
+            if cached_row and cached_row.response_json:
+                data = cached_row.response_json
+                _MEMORY_CACHE[fingerprint] = data
+                return data
+        finally:
+            if should_close:
+                session.close()
+    except Exception as exc:
+        logger.debug(f"Cache DB lookup skipped ({exc})")
+
+    return None
+
+
+def store_cached_extraction(
+    fingerprint: str,
+    data: Dict[str, Any],
+    provider: str = "groq",
+    model: str = "llama-3.3-70b-versatile",
+    prompt_version: str = "v1.0",
+    db: Optional[Any] = None,
+) -> None:
+    """
+    Persist extraction result into in-memory and database cache.
+    """
+    if len(_MEMORY_CACHE) >= _MAX_MEMORY_CACHE_SIZE:
+        # Simple eviction
+        _MEMORY_CACHE.pop(next(iter(_MEMORY_CACHE)))
+    _MEMORY_CACHE[fingerprint] = data
+
+    try:
+        from database import SessionLocal
+        from entities.llm_extraction_cache import LLMExtractionCache
+
+        session = db if db is not None else SessionLocal()
+        should_close = db is None
+        try:
+            cache_entry = LLMExtractionCache(
+                fingerprint=fingerprint,
+                provider=provider,
+                model=model,
+                prompt_version=prompt_version,
+                response_json=data,
+            )
+            session.add(cache_entry)
+            session.commit()
+        except Exception:
+            session.rollback()
+        finally:
+            if should_close:
+                session.close()
+    except Exception as exc:
+        logger.debug(f"Cache DB save skipped ({exc})")
+
 
 # ==============================================================================
 # CLOUD AI ROUTER PROVIDERS & RATE-LIMIT BACKOFF
@@ -198,6 +287,7 @@ def call_groq(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
+    system_prompt: Optional[str] = None,
     timeout: int = 25,
 ) -> Optional[Dict[str, Any]]:
     """
@@ -221,8 +311,8 @@ def call_groq(
     payload = {
         "model": model_name,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Job Posting Description:\n{description}"},
+            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
+            {"role": "user", "content": f"Input Text:\n{description}"},
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.1,
@@ -244,6 +334,7 @@ def call_openrouter(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
+    system_prompt: Optional[str] = None,
     timeout: int = 30,
 ) -> Optional[Dict[str, Any]]:
     """
@@ -269,8 +360,8 @@ def call_openrouter(
     payload = {
         "model": model_name,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Job Posting Description:\n{description}"},
+            {"role": "system", "content": system_prompt or SYSTEM_PROMPT},
+            {"role": "user", "content": f"Input Text:\n{description}"},
         ],
         "response_format": {"type": "json_object"},
         "temperature": 0.1,
@@ -291,6 +382,7 @@ def call_ollama(
     *,
     model: Optional[str] = None,
     base_url: Optional[str] = None,
+    system_prompt: Optional[str] = None,
     timeout: int = 30,
 ) -> Optional[Dict[str, Any]]:
     """
@@ -301,7 +393,7 @@ def call_ollama(
 
     payload = {
         "model": model_name,
-        "prompt": f"{SYSTEM_PROMPT}\n\nJob Description:\n{description}",
+        "prompt": f"{system_prompt or SYSTEM_PROMPT}\n\nInput Text:\n{description}",
         "format": "json",
         "stream": False,
     }
@@ -361,6 +453,7 @@ def route_cloud_llm(
     description: str,
     *,
     force_provider: Optional[str] = None,
+    system_prompt: Optional[str] = None,
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Multi-Provider Cloud AI Router:
@@ -370,37 +463,199 @@ def route_cloud_llm(
     Returns: (extracted_json_or_none, provider_tag)
     """
     if force_provider == "groq":
-        res = execute_with_backoff(call_groq, description, max_retries=2)
+        res = execute_with_backoff(call_groq, description, system_prompt=system_prompt, max_retries=2)
         return (res, "tier3_cloud_llm_groq") if res else (None, "tier3_failed")
 
     if force_provider == "openrouter":
-        res = execute_with_backoff(call_openrouter, description, max_retries=2)
+        res = execute_with_backoff(call_openrouter, description, system_prompt=system_prompt, max_retries=2)
         return (res, "tier3_cloud_llm_openrouter") if res else (None, "tier3_failed")
 
     if force_provider == "ollama":
-        res = call_ollama(description)
+        res = call_ollama(description, system_prompt=system_prompt)
         return (res, "tier3_ollama_llm") if res else (None, "tier3_failed")
 
     # 1. Try Primary: Groq Free Tier
     if settings.GROQ_API_KEY:
-        res = execute_with_backoff(call_groq, description, max_retries=2)
+        res = execute_with_backoff(call_groq, description, system_prompt=system_prompt, max_retries=2)
         if res:
             return res, "tier3_cloud_llm_groq"
         logger.info("Groq provider unavailable or rate-limited. Failing over to OpenRouter...")
 
     # 2. Try Secondary: OpenRouter Free Tier
     if settings.OPENROUTER_API_KEY:
-        res = execute_with_backoff(call_openrouter, description, max_retries=2)
+        res = execute_with_backoff(call_openrouter, description, system_prompt=system_prompt, max_retries=2)
         if res:
             return res, "tier3_cloud_llm_openrouter"
         logger.info("OpenRouter provider unavailable or rate-limited. Failing over to Ollama/Regex...")
 
     # 3. Try Local Ollama if available
-    res = call_ollama(description)
+    res = call_ollama(description, system_prompt=system_prompt)
     if res:
         return res, "tier3_ollama_llm"
 
     return None, "tier1_regex_fallback"
+
+
+class LLMExtractionService:
+    """
+    Unified extraction and candidate parsing service with SHA-256 caching.
+    """
+
+    CANDIDATE_PARSE_SYSTEM_PROMPT = """
+You are a senior Tech Recruiter and Labor Market Intelligence AI.
+Parse the candidate's resume/profile text and extract structured attributes conforming strictly to JSON:
+{
+  "job_title": "Current, most recent, or target job title",
+  "seniority": "Estagiário | Júnior | Pleno | Sênior | Especialista | Lead",
+  "years_experience": <minimum integer years of professional experience>,
+  "hard_skills": ["technical skills, programming languages, databases, tools"],
+  "soft_skills": ["interpersonal and leadership qualities"],
+  "tech_stack": ["architectures and domains, e.g. Backend, Cloud, Frontend, ML"]
+}
+Return ONLY valid JSON.
+"""
+
+    EXPLAIN_GAPS_SYSTEM_PROMPT = """
+You are an expert AI Career Coach.
+Given the candidate match analysis and skill gaps against a specific job, produce a concise (2-3 sentences), highly actionable explanation in Portuguese.
+Highlight:
+1. The candidate's main strength alignment.
+2. The most critical missing requirement.
+3. A practical upskilling recommendation.
+Return ONLY valid JSON with a single key "explanation": {"explanation": "..."}.
+"""
+
+    @classmethod
+    def extract_job(
+        cls,
+        description: str,
+        *,
+        force_provider: Optional[str] = None,
+        db: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Extract structured job posting features with SHA-256 cache check.
+        """
+        fingerprint = compute_extraction_fingerprint(description, prompt_version="v1.0", schema_type="job")
+        cached = get_cached_extraction(fingerprint, db=db)
+        if cached:
+            cached_copy = dict(cached)
+            cached_copy["tier_used"] = "cached_llm"
+            return cached_copy
+
+        raw, provider_tag = route_cloud_llm(description, force_provider=force_provider)
+        raw = raw or {}
+
+        salary_data = _parse_salary_payload(raw.get("salary"))
+        result = {
+            "job_title": raw.get("job_title"),
+            "salary": salary_data,
+            "seniority": raw.get("seniority") or raw.get("nivel"),
+            "contract_type": _coerce_list(raw.get("contract_type") or raw.get("contrato")),
+            "hard_skills": _coerce_list(raw.get("hard_skills")),
+            "soft_skills": _coerce_list(raw.get("soft_skills")),
+            "nice_to_have": _coerce_list(raw.get("nice_to_have")),
+            "tech_stack": _coerce_list(raw.get("tech_stack")),
+            "years_experience": _coerce_int(raw.get("years_experience") or raw.get("experiencia_anos")),
+            "confidence_score": _coerce_float(raw.get("confidence_score"), default=0.9),
+            "tier_used": provider_tag if raw else "tier1_regex_fallback",
+        }
+
+        if raw:
+            store_cached_extraction(
+                fingerprint,
+                result,
+                provider=provider_tag,
+                model=settings.GROQ_MODEL,
+                prompt_version="v1.0",
+                db=db,
+            )
+
+        return result
+
+    @classmethod
+    def parse_candidate_profile(
+        cls,
+        resume_text: str,
+        *,
+        force_provider: Optional[str] = None,
+        db: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Parse raw resume text into structured candidate profile attributes.
+        """
+        fingerprint = compute_extraction_fingerprint(resume_text, prompt_version="v1.0", schema_type="candidate")
+        cached = get_cached_extraction(fingerprint, db=db)
+        if cached:
+            return cached
+
+        raw, provider_tag = route_cloud_llm(
+            resume_text,
+            force_provider=force_provider,
+            system_prompt=cls.CANDIDATE_PARSE_SYSTEM_PROMPT,
+        )
+        raw = raw or {}
+
+        result = {
+            "job_title": raw.get("job_title"),
+            "seniority": raw.get("seniority"),
+            "years_experience": _coerce_int(raw.get("years_experience")),
+            "hard_skills": _coerce_list(raw.get("hard_skills")),
+            "soft_skills": _coerce_list(raw.get("soft_skills")),
+            "tech_stack": _coerce_list(raw.get("tech_stack")),
+            "tier_used": provider_tag if raw else "tier1_regex_fallback",
+        }
+
+        if raw:
+            store_cached_extraction(
+                fingerprint,
+                result,
+                provider=provider_tag,
+                model=settings.GROQ_MODEL,
+                prompt_version="v1.0",
+                db=db,
+            )
+
+        return result
+
+    @classmethod
+    def explain_gaps(
+        cls,
+        match_context: str,
+        *,
+        force_provider: Optional[str] = None,
+        db: Optional[Any] = None,
+    ) -> str:
+        """
+        Generate a concise narrative explanation for candidate-to-job fit and gaps.
+        """
+        fingerprint = compute_extraction_fingerprint(match_context, prompt_version="v1.0", schema_type="explain")
+        cached = get_cached_extraction(fingerprint, db=db)
+        if cached and isinstance(cached, dict) and "explanation" in cached:
+            return str(cached["explanation"])
+
+        raw, _ = route_cloud_llm(
+            match_context,
+            force_provider=force_provider,
+            system_prompt=cls.EXPLAIN_GAPS_SYSTEM_PROMPT,
+        )
+
+        explanation = ""
+        if raw and isinstance(raw, dict):
+            explanation = raw.get("explanation") or raw.get("summary") or ""
+
+        if not explanation:
+            explanation = "Perfil analisado com sucesso pelo algoritmo determinístico de alinhamento de competências."
+
+        store_cached_extraction(
+            fingerprint,
+            {"explanation": explanation},
+            provider="groq",
+            model=settings.GROQ_MODEL,
+            prompt_version="v1.0",
+            db=db,
+        )
+        return explanation
 
 
 def extract(
@@ -411,24 +666,7 @@ def extract(
     force_provider: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Tier 3 Cloud AI Extraction entry point.
-    Dispatches to Cloud AI Router and normalizes output into schema.
+    Tier 3 Cloud AI Extraction entry point (backward compatible).
+    Dispatches to LLMExtractionService.
     """
-    raw, provider_tag = route_cloud_llm(description, force_provider=force_provider)
-    raw = raw or {}
-
-    salary_data = _parse_salary_payload(raw.get("salary"))
-
-    return {
-        "job_title": raw.get("job_title"),
-        "salary": salary_data,
-        "seniority": raw.get("seniority") or raw.get("nivel"),
-        "contract_type": _coerce_list(raw.get("contract_type") or raw.get("contrato")),
-        "hard_skills": _coerce_list(raw.get("hard_skills")),
-        "soft_skills": _coerce_list(raw.get("soft_skills")),
-        "nice_to_have": _coerce_list(raw.get("nice_to_have")),
-        "tech_stack": _coerce_list(raw.get("tech_stack")),
-        "years_experience": _coerce_int(raw.get("years_experience") or raw.get("experiencia_anos")),
-        "confidence_score": _coerce_float(raw.get("confidence_score"), default=0.9),
-        "tier_used": provider_tag if raw else "tier1_regex_fallback",
-    }
+    return LLMExtractionService.extract_job(description, force_provider=force_provider)

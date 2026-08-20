@@ -61,12 +61,40 @@ class JobMatchItem(BaseModel):
     hard_skill_overlap: float = Field(..., description="Hard skills overlap percentage 0-100%")
     soft_skill_overlap: float = Field(..., description="Soft skills overlap percentage 0-100%")
     vector_similarity: float = Field(..., description="Semantic embedding similarity 0-100%")
+    hard_points: float = Field(default=0.0, description="Points from hard skill overlap (max 50)")
+    soft_points: float = Field(default=0.0, description="Points from soft skill overlap (max 20)")
+    vector_points: float = Field(default=0.0, description="Points from dense vector similarity (max 30)")
+    total_points: float = Field(default=0.0, description="Total composite points (max 100)")
+    match_reason: Optional[str] = Field(default=None, description="Human-readable explanation of why this job matched")
     gap_analysis: SkillGapAnalysis
 
 
 class CandidateMatchResponse(BaseModel):
     extracted_skills: Dict[str, List[str]]
+    candidate_summary: Optional[Dict[str, Any]] = Field(default=None, description="Granular area strength and market fit summary")
     target_region: Optional[str] = None
     total_evaluated: int
     total_matches: int
     matches: List[JobMatchItem]
+
+
+class SkillGapExplanationRequest(BaseModel):
+    resume_text: Optional[str] = Field(default=None, description="Direct resume text or profile summary")
+    profile_id: Optional[int] = Field(default=None, description="Candidate profile ID if previously saved")
+    job_id: int = Field(..., description="Target Job ID to analyze and explain fit against")
+
+
+class SkillGapExplanationResponse(BaseModel):
+    job_id: int
+    job_title: str
+    company: Optional[str] = None
+    fit_score: float
+    hard_skill_overlap: float
+    soft_skill_overlap: float
+    vector_similarity: float
+    matched_hard_skills: List[str] = []
+    missing_hard_skills: List[str] = []
+    recommended_upskilling: List[str] = []
+    explanation: str = Field(..., description="Actionable narrative explanation of the fit score and specific skill gaps")
+
+
