@@ -1,0 +1,7 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "skillpulse-python-worker-fastapi-baseline",
+  "main": "main.py",
+  "compatibility_date": "2026-08-21",
+  "compatibility_flags": ["python_workers"]
+}

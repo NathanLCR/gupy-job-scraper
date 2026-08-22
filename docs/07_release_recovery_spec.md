@@ -1,6 +1,6 @@
 # SkillPulse — Production Release Recovery Specification
 
-**Status:** Draft for review
+**Status:** Implemented locally; production verification pending
 
 **Date:** 2026-08-22
 
@@ -31,6 +31,15 @@ Production QA on 2026-08-21 established:
 - the current working tree already contains partial corrections, including JSON content-type validation, explicit unavailable states, `frontend/config.js`, and a Pages `/api/*` guard. These changes are uncommitted and were not present in the tested deployment.
 
 The implementation must audit and test those local changes. It must not assume they are correct merely because they exist.
+
+### 2.1 Code audit findings (2026-08-22)
+
+`frontend/script.js`'s `fetchApiJson` helper was reviewed against §5 and largely satisfies it: it sets `redirect: "error"`, times out via `AbortController`, rejects non-2xx status, and rejects a missing or non-JSON content type before parsing the body. No hardcoded fixture names (`VectorAI Labs`, `FinScale Technologies`, `Scale AI Systems`, `Cognitive Retrieval Labs`) or default scores (88/92) were found in `frontend/script.js`.
+
+Two architecture facts should be made explicit here because they affect how "the API" is deployed and verified:
+
+- `app.py` is a full FastAPI application that already serves the frontend itself — it mounts `frontend/` with `StaticFiles` and serves `index.html` on `/`, `/match`, `/jobs`, `/market`, and `/how-it-works` — backed by PostgreSQL/pgvector, not the Cloudflare Worker + D1 architecture that `docs/05_api_routing_fix_spec.md` targets. `frontend/_redirects` and `frontend/_headers` only take effect when Cloudflare Pages serves `frontend/` as a standalone static artifact; they have no effect at all when `app.py` is the origin, because Pages configuration files are not read by FastAPI. Both are live, plausible deployment targets for this repository today.
+- A routing, caching, or fallback rule added to `_redirects`/`_headers` does not automatically protect or apply to a deployment of `app.py`, and vice versa. §5's routing order and §6's cache-control rules must be independently verified against whichever target is actually deployed; a passing check against one target is not evidence for the other. (This same gap materially affects `docs/08_admin_security_spec.md`, where the operator-asset protection in `_redirects` does not carry over to `app.py`'s static mount.)
 
 ## 3. Selected release architecture
 
@@ -132,7 +141,7 @@ Implement one shared JSON request helper for the public client. It must:
 - validate each endpoint's minimal required fields before rendering;
 - expose a stable error category to UI renderers without exposing stack traces or credentials to users.
 
-Cloudflare Pages routing must apply in this order:
+Cloudflare Pages routing must apply in this order. Any deployment where `app.py` itself is the origin instead of Cloudflare Pages must reproduce the same precedence in its own route table and static-mount configuration; `_redirects` has no effect there and must not be treated as satisfying this requirement for that target:
 
 1. static assets;
 2. the explicit SPA view routes `/match`, `/jobs`, `/market`, and `/how-it-works`;
@@ -235,16 +244,17 @@ Production deployment requires explicit user approval. After approval and deploy
 
 ## 10. Acceptance checklist
 
-- [ ] HTML SPA responses cannot be parsed as API success.
-- [ ] Jobs never displays cached or fixture vacancies after live failure.
-- [ ] Match never displays generated scores or opportunities after live failure.
-- [ ] Market never displays stale or seeded metrics after live failure.
-- [ ] Empty valid responses are distinct from unavailable responses.
-- [ ] `config.js` loads before both public and admin controllers.
-- [ ] Pages `/api/*` returns JSON 404 before the SPA fallback when no API is mounted.
+- [x] HTML SPA responses cannot be parsed as API success.
+- [x] Jobs never displays cached or fixture vacancies after live failure.
+- [x] Match never displays generated scores or opportunities after live failure.
+- [x] Market never displays stale or seeded metrics after live failure.
+- [x] Empty valid responses are distinct from unavailable responses.
+- [x] `config.js` loads before both public and admin controllers.
+- [x] Pages `/api/*` returns JSON 404 before the SPA fallback when no API is mounted.
 - [ ] Deploy artifacts are hashed and reviewed.
-- [ ] Local automated and browser acceptance passes.
+- [x] Local automated and browser acceptance passes.
 - [ ] Production deployment and smoke testing occur only after explicit approval.
+- [ ] Routing order, cache-control headers, and static-asset exposure have been verified separately on every deployment target that actually serves `frontend/` (the Cloudflare Pages static artifact and any deployment of `app.py`), not assumed from one.
 
 ## 11. Out of scope
 

@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from api.v1.auth import require_admin_auth
 from database import get_sync_db
 from entities import Job, JobPost, Company, City, State, HardSkill
 from entities.associations import job_hard_skills
@@ -72,14 +73,14 @@ def get_ingest_sources():
     )
 
 
-@router.get("/ingest/status", response_model=IngestStatusResponse)
+@router.get("/ingest/status", response_model=IngestStatusResponse, dependencies=[Depends(require_admin_auth)])
 def get_ingest_status():
     """Retrieve real-time status and metric counters of the ingestion engine."""
     status_data = ingestion_manager.get_status()
     return IngestStatusResponse(**status_data)
 
 
-@router.post("/ingest", response_model=TaskStatusResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/ingest", response_model=TaskStatusResponse, status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_admin_auth)])
 def enqueue_job_ingestion(request: JobIngestRequest):
     """Trigger background job scraping/ingestion adapter task across public feeds."""
     task_id = f"ingest_{uuid.uuid4().hex[:12]}"
@@ -148,7 +149,7 @@ def search_jobs_hybrid(
     )
 
 
-@router.get("/export")
+@router.get("/export", dependencies=[Depends(require_admin_auth)])
 def export_processed_jobs():
     """Export all processed jobs as CSV."""
     csv_data = export_jobs_csv()
@@ -187,7 +188,7 @@ def list_raw_job_posts(
     return result
 
 
-@router.get("/posts/export")
+@router.get("/posts/export", dependencies=[Depends(require_admin_auth)])
 def export_raw_job_posts():
     """Export raw job posts as CSV."""
     csv_data = export_job_posts_csv()

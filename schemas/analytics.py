@@ -12,10 +12,14 @@ class SkillDemandItem(BaseModel):
 
 class SkillAnalyticsResponse(BaseModel):
     total_jobs: int = 0
+    distinct_skills: int = 0
+    distinct_companies: int = 0
+    markets_tracked: int = 0
     top_skills: List[SkillDemandItem] = []
     top_locations: List[Dict[str, Any]] = []
     salary_by_seniority: List[Dict[str, Any]] = []
     contract_types: List[Dict[str, Any]] = []
+    workplace_distribution: List[Dict[str, Any]] = []
     region: Optional[str] = None
 
 

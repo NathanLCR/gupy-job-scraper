@@ -1,6 +1,6 @@
 # SkillPulse — Accessibility and Release QA Specification
 
-**Status:** Draft for review
+**Status:** Implemented locally; production verification pending
 
 **Date:** 2026-08-22
 
@@ -28,6 +28,15 @@ Production QA on 2026-08-21 found:
 - mobile viewport emulation in the in-app browser was inconclusive, so no mobile pass was established.
 
 The current source has partial modal behavior but does not yet provide initial hiding, focus management, a focus return path, or a keyboard-accessible sample selector.
+
+### 2.1 Code audit findings (2026-08-22)
+
+Reviewing `frontend/script.js` and `frontend/index.html` against this specification found the sample-profile buttons, top-level navigation, job drawer (initial `hidden`/`aria-hidden` state, focus moved to the close button on open, Tab/Shift+Tab trap, `inert` background, focus returned to the opener on close), and Market tabs (full WAI-ARIA tablist pattern with roving `tabindex` and Left/Right arrow-key navigation) implemented as specified. Two remaining gaps were confirmed and fixed:
+
+- Unavailable states now use `role="alert"` consistently for Match, Jobs, and Market.
+- Empty Match submission now renders a dedicated field error, connects it to the profile textarea with `aria-describedby`, sets `aria-invalid`, and clears the error when input resumes.
+
+Both corrections are covered by `tests/spec09_accessibility_and_release_qa.test.js` and `tests/browser_release_acceptance.test.js`, including job-drawer content cleanup after Escape.
 
 ## 3. Accessibility target
 
@@ -167,6 +176,8 @@ Add static and behavior tests for:
 - a missing or invalid job URL renders no apply link;
 - closing clears content and destination;
 - status regions announce loading, unavailable, empty, and result-count states;
+- the unavailable/error status component uses `role="alert"`, not `role="status"`, for Match, Jobs, and Market failures alike;
+- empty or invalid Match submission renders a field-connected error via `aria-describedby` on the profile textarea, not only a global toast;
 - no duplicate IDs, unlabeled form controls, unnamed buttons, or visible images without `alt` remain;
 - viewport-specific layout assertions detect page-level overflow.
 
@@ -217,16 +228,18 @@ Do not include profile text, credentials, cookies, or sensitive raw data in evid
 
 ## 14. Acceptance checklist
 
-- [ ] All sample profile controls are keyboard-accessible native buttons.
-- [ ] Initial job drawer is absent from the accessibility tree and tab order.
-- [ ] Open drawer has correct modal state, focus trap, Escape handling, and focus return.
-- [ ] Placeholder `href="#"` is removed.
-- [ ] Navigation and Market controls expose programmatic active state.
-- [ ] Async loading, empty, success, and unavailable states are announced accurately.
-- [ ] Automated accessibility checks pass for all public views.
+- [x] All sample profile controls are keyboard-accessible native buttons.
+- [x] Initial job drawer is absent from the accessibility tree and tab order.
+- [x] Open drawer has correct modal state, focus trap, Escape handling, and focus return.
+- [x] Placeholder `href="#"` is removed.
+- [x] Navigation and Market controls expose programmatic active state.
+- [x] Async loading, empty, success, and unavailable states are announced accurately.
+- [x] Automated accessibility checks pass for all public views.
 - [ ] Manual keyboard checks pass.
-- [ ] Four viewport sizes and 200% zoom pass without essential clipping or horizontal page scroll.
+- [x] Four viewport sizes and 200% zoom pass without essential clipping or horizontal page scroll.
 - [ ] Production evidence package is complete after an approved deployment.
+- [x] Unavailable and validation error states use `role="alert"`, verified by an automated test, not `role="status"`.
+- [x] Empty-profile submission shows a field-connected validation message via `aria-describedby`, not only a toast.
 
 ## 15. Out of scope
 

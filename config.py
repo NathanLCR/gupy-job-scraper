@@ -58,10 +58,10 @@ class Settings(BaseSettings):
     RATE_LIMIT_EXPLAIN_RPM: int = 5
     RATE_LIMIT_EXTRACT_RPM: int = 10
 
-    # Admin & Operator Console Security
-    ADMIN_API_KEY: str = "skillpulse-admin-secret"
+    # Admin & Operator Console Security (Spec 08: Fail-Closed Operator Security)
+    ADMIN_API_KEY: Optional[str] = None
     ADMIN_AUTH_ENABLED: bool = True
-    ADMIN_SESSION_COOKIE: str = "skillpulse_admin_token"
+    ADMIN_SESSION_COOKIE: str = "skillpulse_admin_session"
 
     # App environment, CORS & port
     ENVIRONMENT: str = "development"
@@ -69,6 +69,24 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     DEBUG: bool = True
     CORS_ORIGINS: str = '["https://skillpulse.pages.dev", "http://localhost:8000", "http://127.0.0.1:8000"]'
+
+    def validate_security_config(self) -> None:
+        """
+        Enforce fail-closed security configuration at startup per Spec 08 §4.
+        In production, application startup refuses to proceed if:
+        - Admin authentication is disabled;
+        - ADMIN_API_KEY is unset or has insufficient entropy (< 32 characters);
+        - DEBUG mode is enabled.
+        """
+        if self.ENVIRONMENT.lower() == "production":
+            if not self.ADMIN_AUTH_ENABLED:
+                raise RuntimeError("Production configuration refusal: ADMIN_AUTH_ENABLED must be True")
+            if not self.ADMIN_API_KEY:
+                raise RuntimeError("Production configuration refusal: ADMIN_API_KEY must be configured in production")
+            if len(self.ADMIN_API_KEY) < 32:
+                raise RuntimeError("Production configuration refusal: ADMIN_API_KEY must be at least 32 characters of entropy")
+            if self.DEBUG:
+                raise RuntimeError("Production configuration refusal: DEBUG must be False in production")
 
     model_config = SettingsConfigDict(
         env_file=".env",

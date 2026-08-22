@@ -1,6 +1,6 @@
 # SkillPulse — Operator Surface Security Specification
 
-**Status:** Draft for review
+**Status:** Implemented locally; production verification pending
 
 **Date:** 2026-08-22
 
@@ -31,6 +31,18 @@ The current source explains how this can occur:
 - the login endpoint returns the credential as a token and sets a non-HttpOnly cookie;
 - some mutating legacy and ingestion routes require a complete authorization audit.
 
+### 2.1 Code audit findings (2026-08-22)
+
+The audit exposed four concrete gaps. Three have now been closed and regression-tested; the protected legacy aliases remain until the controller migration described in §11:
+
+- ~~`app.py` exposed operator HTML, JavaScript, and CSS through the public `frontend/` static mount.~~ **Fixed 2026-08-22:** operator files now live under the separate `operator/` root. The public mount returns 404 for the former paths, while `/operator` and `/operator/assets/*` require server-side authentication.
+- ~~The obscured `/nathan-eh-foda` route made the combined login/workspace document either public or unreachable for a first-time operator.~~ **Fixed 2026-08-22:** `/operator/login` is a public login-only document, `/operator` is a distinct session-gated workspace, and the obscured route is retired with 404.
+- ~~`AdminSessionStore` (`api/v1/auth.py`) keeps sessions in an in-process Python dictionary. This satisfies a single-worker test run but not §4: sessions do not survive a process restart and are not shared across multiple workers or instances.~~ **Fixed 2026-08-22:** `AdminSessionStore` now persists to a new `admin_sessions` table (`entities/admin_session.py`) through the same PostgreSQL/SQLite database used elsewhere in the repository, storing only the SHA-256 hash plus `issued_at`/`expires_at`/`revoked_at`/`last_seen_at`. Verified directly: a session created by one `AdminSessionStore` instance validates and can be revoked from a second, independent instance with no shared state — the property an in-memory dict could never provide.
+- ~~No route validates the `Origin` header on cookie-authenticated mutations. CORS is configured once, application-wide, in `app.py` (`allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.pages\.dev"`), which admits any `*.pages.dev` subdomain — not only the operator's own origin — and is not narrowed for `/api/v1/admin/*`.~~ **Fixed 2026-08-22:** `require_admin_auth` and `admin_logout` now call a shared `_validate_operator_origin` check whenever the session cookie is what authenticated a state-changing request: it rejects a mismatched `Origin` always, and a missing `Origin` in production, independent of CORS. Separately, `app.py`'s CORS middleware was split by path — `/api/v1/admin/*` now allow-lists no origin at all (same-origin calls from the console are unaffected either way), while the broader public policy is unchanged for everything else. Verified directly: a forged `Origin: https://evil.example.com` on a cookie-authenticated mutation now returns 403, a preflight to `/api/v1/admin/verify` from an origin the public policy allows (`*.pages.dev`) now returns 400 with no `Access-Control-Allow-Origin`, and Bearer-token automation is unaffected by either check.
+- Legacy mutation aliases (`/scrape/start`, `/database/init`, `/regex-extract`, `/llm-extract`, `/search-terms`, and their siblings) remain in `app.py`. Each carries `Depends(require_admin_auth)`, so none is currently exploitable without a credential, but §5's instruction to remove them once the admin controller uses the protected `/api/v1/admin/*` namespace has not been carried out.
+
+Each finding was confirmed in source and is covered by an automated regression test. §3.1, §4, §7, §9, and §11 keep the requirements independently testable.
+
 ## 3. Selected security architecture
 
 ### 3.1 Separate public and operator delivery
@@ -40,6 +52,10 @@ The public Cloudflare Pages artifact must not publish the operator HTML, JavaScr
 The operator console is served by the API application on the same origin under the Worker architecture described in `docs/05_api_routing_fix_spec.md`. `GET /operator/login` returns a login-only document. `GET /operator` requires a valid session cookie before returning the operator application shell. Operator JavaScript and CSS are served only from protected `/operator/assets/*` routes.
 
 Until that protected host exists, the operator console remains unavailable in production. An unavailable admin console is safer than a public static console whose controls merely appear protected.
+
+Any process that serves the shared `frontend/` directory as static files — a monolithic API server, a CDN origin, or a local dev server — must not expose `admin.html`, `admin.js`, or `admin.css` from that mount. Either exclude those three files from the static root entirely, or serve the public and operator directories from physically separate roots. A route-level obscured path or auth gate defined elsewhere in the same application does not satisfy this requirement if any other route in that application — including a generic static-file mount — can still return the same bytes without authentication.
+
+Whatever entry point is chosen must also expose an unauthenticated login document as a distinct response: an operator with no session yet must be able to load a page containing only the login form. Gating the entire operator document (login form included) behind a check that 404s until a session already exists is a lockout, not fail-closed security — it must be treated as a defect, not an acceptable interim state.
 
 ### 3.2 Browser authentication
 
@@ -77,6 +93,8 @@ Development tests must set an explicit test secret through the test environment.
 Secret comparison uses `secrets.compare_digest` after normalizing inputs to the same type. Authentication failures return the same public message and status regardless of whether a credential was absent or incorrect.
 
 Successful browser login generates 32 random bytes with `secrets.token_urlsafe(32)`. Store only a SHA-256 hash in an `admin_sessions` relation with `issued_at`, `expires_at`, `revoked_at`, and `last_seen_at`; place the raw token only in the HttpOnly cookie. The session relation is part of this security feature and uses the relational backend selected by `docs/05_api_routing_fix_spec.md`.
+
+An in-memory, per-process session dictionary does not satisfy this requirement, even as an interim step: it silently loses every session on restart and is invisible to any other worker or instance, which reintroduces the exact "apparently authenticated" ambiguity this specification exists to remove. Until the relational backend is available, the session store must at minimum be a single shared store reachable by every process serving `/api/v1/admin/*` (for example the existing PostgreSQL database already used elsewhere in this repository) — not a plain Python dict scoped to one process.
 
 ## 5. Authorization matrix
 
@@ -122,6 +140,7 @@ Buttons for mutation remain disabled while a request is in progress. Destructive
 ## 7. Session, CSRF, CORS, and rate limiting
 
 - Operator routes allow only the operator origin; wildcard CORS is forbidden.
+- The permissive CORS policy used for public read endpoints — including any regex that admits multiple `*.pages.dev` subdomains — must not apply to `/api/v1/admin/*`. Operator routes are allow-listed to the single configured operator origin, checked independently of the public CORS middleware, not inherited from an application-wide `allow_origin_regex`.
 - State-changing cookie-authenticated requests validate `Origin` and reject missing or unexpected origins in production.
 - Login permits at most five failed attempts per client IP in 15 minutes, followed by a 15-minute rejection window.
 - Repeated failures produce HTTP 429 without revealing whether a key prefix was correct.
@@ -162,7 +181,9 @@ Prove that:
 - logout invalidates the session;
 - unexpected origins are rejected on cookie-authenticated mutations;
 - rate limiting activates after the configured number of failed logins;
-- responses do not echo credentials.
+- responses do not echo credentials;
+- known static asset paths for the operator console (`/frontend/admin.html`, `/frontend/admin.js`, `/frontend/admin.css`, and any equivalent path under a plain static-file mount) are unreachable without authentication in every deployment target that serves the shared frontend directory — not only through the obscured or protected route;
+- an unauthenticated request can reach a login-only document distinct from the authenticated operator workspace; a session-gated 404 must not be the only response to the console's entry route.
 
 ### 9.2 Frontend tests
 
@@ -180,7 +201,7 @@ Prove that:
 
 Production checks are read-only unless separately approved:
 
-- known public admin asset URLs return 404 on Pages;
+- known public admin asset URLs return 404 on Pages, and on any other deployment target (such as `app.py`) that also serves the shared frontend directory directly;
 - the protected operator URL returns a login challenge or an access denial;
 - unauthenticated API verification returns 401 JSON, never HTML 200;
 - no ingestion, extraction, initialization, deletion, or export action is invoked during the check.
@@ -197,15 +218,20 @@ Production checks are read-only unless separately approved:
 ## 11. Acceptance checklist
 
 - [ ] Public Pages no longer publishes operator assets.
-- [ ] Operator UI is locked by default and fails closed.
-- [ ] No frontend or backend default admin secret exists.
-- [ ] Query-string credentials are rejected.
-- [ ] Browser JavaScript never receives or stores the operator secret after login.
-- [ ] Session cookies are opaque, HttpOnly, time-limited, and invalidated on logout.
-- [ ] Every mutating or sensitive endpoint has server-side authorization.
-- [ ] CSRF, CORS, login rate limiting, and no-store behavior are tested.
+- [x] Operator UI is locked by default and fails closed.
+- [x] No frontend or backend default admin secret exists.
+- [x] Query-string credentials are rejected.
+- [x] Browser JavaScript never receives or stores the operator secret after login.
+- [x] Session cookies are opaque, HttpOnly, time-limited, and invalidated on logout.
+- [x] Every mutating or sensitive endpoint has server-side authorization.
+- [x] CSRF, CORS, login rate limiting, and no-store behavior are tested.
 - [ ] Read-only production security checks pass.
-- [ ] No administrative mutation was used as a smoke test.
+- [x] No administrative mutation was used as a smoke test.
+- [x] Every static-file mount serving the shared `frontend/` directory (including a monolithic `app.py` deployment) excludes operator HTML/JS/CSS; a test fetches `/frontend/admin.html` directly and confirms it is unreachable.
+- [x] An unauthenticated operator can reach a login-only document; only the authenticated shell requires a session — the console's entry route is not a session-gated 404 wall in front of the whole document.
+- [x] Admin sessions are backed by a durable, shared store (relational or otherwise), not an in-process dictionary scoped to one worker.
+- [x] Cookie-authenticated operator mutations validate `Origin` against the single operator origin, independent of the broader public CORS policy.
+- [ ] Legacy mutation aliases (`/scrape/start`, `/database/init`, etc.) are removed once the admin controller uses `/api/v1/admin/*` exclusively.
 
 ## 12. Out of scope
 

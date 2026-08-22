@@ -304,12 +304,15 @@ class TestConfidenceRouterCascade:
 class TestExtractAPIEndpoints:
 
     def test_extract_endpoint_cascade_mode(self):
+        from config import settings
+        settings.ADMIN_API_KEY = "test-operator-secret-cascade-32-chars"
+        headers = {"Authorization": "Bearer test-operator-secret-cascade-32-chars"}
         payload = {
             "text": "Desenvolvedor React Sênior. Requisitos: 6 anos de experiência com React, TypeScript, Redux e Tailwind CSS.",
             "extractor_type": "cascade",
             "tier_threshold": 0.85,
         }
-        res = client.post("/api/v1/extract", json=payload)
+        res = client.post("/api/v1/extract", json=payload, headers=headers)
         assert res.status_code == 200
         data = res.json()
         assert "React" in data["hard_skills"]
@@ -324,7 +327,9 @@ class TestExtractAPIEndpoints:
         assert unauth_res.status_code == 401
 
         # 2. Authenticated with admin key should succeed
-        headers = {"X-Admin-Key": "skillpulse-admin-secret"}
+        from config import settings
+        settings.ADMIN_API_KEY = "test-operator-secret-cascade-32-chars"
+        headers = {"Authorization": "Bearer test-operator-secret-cascade-32-chars"}
         res = client.post("/api/v1/extract/batch?engine=cascade&limit=5", headers=headers)
         assert res.status_code == 202
         assert res.json()["engine"] == "cascade"

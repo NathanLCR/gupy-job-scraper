@@ -1,3 +1,4 @@
+from entities.admin_session import AdminSession
 from entities.base import Base
 from entities.candidate_profile import CandidateProfile
 from entities.city import City
@@ -17,6 +18,7 @@ from entities.state import State
 from entities.taxonomy_node import TaxonomyNode
 
 __all__ = [
+    "AdminSession",
     "Base",
     "CandidateProfile",
     "City",

@@ -1,5 +1,6 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from api.v1.auth import require_admin_auth
 from schemas import (
     SearchTermCreate,
     SearchTermListResponse,
@@ -36,7 +37,7 @@ def list_search_terms(
     return result
 
 
-@router.post("", response_model=SearchTermResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=SearchTermResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_auth)])
 def create_search_term(term_in: SearchTermCreate):
     """Register a new job keyword to be periodically scraped."""
     try:
@@ -46,7 +47,7 @@ def create_search_term(term_in: SearchTermCreate):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
-@router.put("/{id}", response_model=SearchTermResponse)
+@router.put("/{id}", response_model=SearchTermResponse, dependencies=[Depends(require_admin_auth)])
 def toggle_search_term_active(id: int, term_update: SearchTermUpdate):
     """Update active status of a search term."""
     try:
@@ -56,7 +57,7 @@ def toggle_search_term_active(id: int, term_update: SearchTermUpdate):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
-@router.delete("/{id}")
+@router.delete("/{id}", dependencies=[Depends(require_admin_auth)])
 def delete_search_term(id: int):
     """Remove a search term from scraping queue."""
     try:

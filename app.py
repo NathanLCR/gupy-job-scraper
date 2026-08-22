@@ -1,12 +1,13 @@
 from contextlib import asynccontextmanager
 import os
+import uuid
 from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from api.v1.auth import require_admin_auth
+from api.v1.auth import audit_operator_event, require_admin_auth
 from api.v1.router import api_v1_router
 from config import settings
 from database import init_db
@@ -41,6 +42,9 @@ from services.stats_service import get_stats
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Enforce fail-closed security configuration at startup
+    settings.validate_security_config()
+
     # Startup: Ensure database tables are created
     try:
         init_db()
@@ -79,14 +83,60 @@ def _get_cors_origins():
     return ["http://localhost:8000", "http://127.0.0.1:8000"]
 
 
+class _ScopedCORSMiddleware:
+    """
+    Applies a stricter CORS policy to the operator authentication surface
+    (`/api/v1/admin/*`) than to public read endpoints (Spec 08 §7).
+
+    Starlette's `CORSMiddleware` is a single, application-wide policy; the
+    public policy below intentionally allows any `*.pages.dev` preview
+    subdomain so the deployed frontend keeps working across preview
+    deploys. That regex must never extend to `/api/v1/admin/*` — it is the
+    surface that manages and reveals session-cookie authentication state
+    (`/login`, `/logout`, `/verify`), and a cross-origin reader there is
+    exactly the "operator routes allow only the operator origin" case this
+    specification forbids. This wraps the same inner app with two
+    independent `CORSMiddleware` instances and dispatches by path, so the
+    admin policy is enforced regardless of what the public policy allows.
+    """
+
+    def __init__(self, app, *, admin_path_prefix: str, public_kwargs: dict, admin_kwargs: dict):
+        self._admin_path_prefix = admin_path_prefix
+        self._public = CORSMiddleware(app, **public_kwargs)
+        self._admin = CORSMiddleware(app, **admin_kwargs)
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path", "").startswith(self._admin_path_prefix):
+            await self._admin(scope, receive, send)
+        else:
+            await self._public(scope, receive, send)
+
+
 cors_origins = _get_cors_origins()
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.pages\.dev",
-    allow_methods=["*"],
-    allow_headers=["*"],
+    _ScopedCORSMiddleware,
+    admin_path_prefix=f"{settings.API_V1_PREFIX}/admin",
+    public_kwargs=dict(
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?|https://.*\.pages\.dev",
+        allow_methods=["*"],
+        allow_headers=["*"],
+    ),
+    admin_kwargs=dict(
+        # No cross-origin caller is ever legitimate for the operator
+        # session surface: the console and its API share one origin
+        # (Spec 08 §3.1), so no origin is allow-listed here at all. A
+        # same-origin request from the console itself is never subject to
+        # CORS in the first place, so this has no effect on it; a
+        # cross-origin request — from any origin, including the ones the
+        # public policy above allows — gets no `Access-Control-Allow-Origin`
+        # and fails preflight for state-changing requests.
+        allow_origins=[],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    ),
 )
 
 # ─── Public API Rate Limiting Middleware ─────────────────────────────────────
@@ -145,6 +195,26 @@ async def rate_limit_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def operator_audit_and_security_headers(request: Request, call_next):
+    """Attach baseline response protections and audit authenticated mutations."""
+    request.state.request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Request-ID"] = request.state.request_id
+
+    actor = getattr(request.state, "operator_actor_id", None)
+    if actor and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        audit_operator_event(
+            "operator_mutation",
+            request,
+            result=str(response.status_code),
+            actor=actor,
+            action=f"{request.method} {request.url.path}",
+        )
+    return response
+
+
 # Include v1 RESTful API router
 app.include_router(api_v1_router, prefix=settings.API_V1_PREFIX)
 
@@ -154,29 +224,99 @@ if os.path.exists(frontend_dir):
     app.mount("/frontend", StaticFiles(directory=frontend_dir), name="frontend")
 
 
-# ─── Navigation & Health ──────────────────────────────────────────────────────
+# ─── Navigation & Static Frontend Serving ─────────────────────────────────────
 
 @app.get("/", include_in_schema=False)
-def root():
-    return RedirectResponse(url="/dashboard")
-
-
+@app.get("/match", include_in_schema=False)
+@app.get("/jobs", include_in_schema=False)
+@app.get("/market", include_in_schema=False)
+@app.get("/how-it-works", include_in_schema=False)
+@app.get("/about", include_in_schema=False)
 @app.get("/dashboard", include_in_schema=False)
-def dashboard():
+def public_app():
+    """Serves the public single-page application."""
     index_file = os.path.join(frontend_dir, "index.html")
     if os.path.exists(index_file):
         return FileResponse(index_file)
-    return JSONResponse({"message": "SkillPulse AI Backend Running. Visit /docs for OpenAPI specifications."})
+    return JSONResponse({"message": "SkillPulse AI Running. Visit /docs for OpenAPI specifications."})
 
 
-@app.get("/admin", include_in_schema=False)
-@app.get("/admin/{full_path:path}", include_in_schema=False)
-def admin_console(full_path: str = ""):
-    admin_file = os.path.join(frontend_dir, "admin.html")
+# Operator console assets live outside `frontend/` on purpose: `frontend/`
+# is mounted below as a public StaticFiles directory, and any file placed
+# inside it is reachable unauthenticated through that mount regardless of
+# what auth this route enforces (Spec 08 §3.1). Keeping admin.html/js/css
+# in their own directory means there is no path — obscured or not — under
+# which they can be served without going through the routes below.
+operator_dir = os.path.join(os.path.dirname(__file__), "operator")
+_OPERATOR_ASSET_TYPES = {
+    "admin.js": "application/javascript; charset=utf-8",
+    "admin.css": "text/css; charset=utf-8",
+}
+
+
+@app.get("/operator/login", include_in_schema=False)
+def operator_login_document():
+    """Serve the login-only operator entry document."""
+    login_file = os.path.join(operator_dir, "login.html")
+    if os.path.exists(login_file):
+        return FileResponse(
+            login_file,
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": (
+                    "default-src 'none'; style-src 'unsafe-inline'; "
+                    "script-src 'unsafe-inline'; connect-src 'self'; "
+                    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+                ),
+            },
+        )
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+
+@app.get(
+    "/operator",
+    include_in_schema=False,
+    dependencies=[Depends(require_admin_auth)],
+)
+def operator_console():
+    """Serve the operator workspace only after server-side authorization."""
+    admin_file = os.path.join(operator_dir, "admin.html")
     if os.path.exists(admin_file):
-        return FileResponse(admin_file)
-    index_file = os.path.join(frontend_dir, "index.html")
-    return FileResponse(index_file)
+        return FileResponse(
+            admin_file,
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "frame-ancestors 'none'",
+            },
+        )
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+
+@app.get(
+    "/operator/assets/{filename}",
+    include_in_schema=False,
+    dependencies=[Depends(require_admin_auth)],
+)
+def operator_console_assets(filename: str):
+    """Serve only known operator JS/CSS filenames after authorization."""
+    media_type = _OPERATOR_ASSET_TYPES.get(filename)
+    if not media_type:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+    asset_file = os.path.join(operator_dir, filename)
+    if not os.path.exists(asset_file):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+    return FileResponse(
+        asset_file,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
@@ -235,12 +375,12 @@ def legacy_errors(
     )
 
 
-@app.get("/stats", tags=["Health"])
+@app.get("/stats", tags=["Health"], dependencies=[Depends(require_admin_auth)])
 def legacy_stats():
     return get_stats()
 
 
-@app.get("/job-posts", tags=["Job posts"])
+@app.get("/job-posts", tags=["Job posts"], dependencies=[Depends(require_admin_auth)])
 def legacy_job_posts(
     search: Optional[str] = Query(None),
     workplace_type: Optional[str] = Query(None),
@@ -270,7 +410,7 @@ def legacy_export_job_posts():
     )
 
 
-@app.get("/job-posts/{id}", tags=["Job posts"])
+@app.get("/job-posts/{id}", tags=["Job posts"], dependencies=[Depends(require_admin_auth)])
 def legacy_get_job_post(id: int):
     try:
         post = get_job_post(id)
@@ -318,7 +458,7 @@ def legacy_get_job(id: int):
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-@app.get("/search-terms", tags=["Search terms"])
+@app.get("/search-terms", tags=["Search terms"], dependencies=[Depends(require_admin_auth)])
 def legacy_search_terms(
     include_inactive: bool = Query(False),
     search: Optional[str] = Query(None),
@@ -336,7 +476,7 @@ def legacy_search_terms(
     )
 
 
-@app.post("/search-terms", tags=["Search terms"], status_code=status.HTTP_201_CREATED)
+@app.post("/search-terms", tags=["Search terms"], status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_auth)])
 async def legacy_create_search_term(request: Request):
     payload = await request.json()
     term_str = payload.get("term")
@@ -346,7 +486,7 @@ async def legacy_create_search_term(request: Request):
     return new_term.to_dict()
 
 
-@app.put("/search-terms/{id}", tags=["Search terms"])
+@app.put("/search-terms/{id}", tags=["Search terms"], dependencies=[Depends(require_admin_auth)])
 async def legacy_update_search_term(id: int, request: Request):
     payload = await request.json()
     if "is_active" not in payload:
@@ -358,7 +498,7 @@ async def legacy_update_search_term(id: int, request: Request):
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-@app.delete("/search-terms/{id}", tags=["Search terms"])
+@app.delete("/search-terms/{id}", tags=["Search terms"], dependencies=[Depends(require_admin_auth)])
 def legacy_delete_search_term(id: int):
     try:
         remove_search_term(id)
@@ -367,7 +507,7 @@ def legacy_delete_search_term(id: int):
         raise HTTPException(status_code=404, detail=str(exc))
 
 
-@app.post("/regex-extract", tags=["Extractor"])
+@app.post("/regex-extract", tags=["Extractor"], dependencies=[Depends(require_admin_auth)])
 def legacy_regex_extract():
     start_extractor_thread("regex")
     return JSONResponse(
@@ -376,12 +516,12 @@ def legacy_regex_extract():
     )
 
 
-@app.get("/regex-extract/status", tags=["Extractor"])
+@app.get("/regex-extract/status", tags=["Extractor"], dependencies=[Depends(require_admin_auth)])
 def legacy_regex_extract_status():
     return get_extractor_status("regex")
 
 
-@app.post("/llm-extract", tags=["Extractor"])
+@app.post("/llm-extract", tags=["Extractor"], dependencies=[Depends(require_admin_auth)])
 def legacy_llm_extract():
     start_llm_extractor_thread()
     return JSONResponse(
@@ -390,7 +530,7 @@ def legacy_llm_extract():
     )
 
 
-@app.get("/llm-extract/status", tags=["Extractor"])
+@app.get("/llm-extract/status", tags=["Extractor"], dependencies=[Depends(require_admin_auth)])
 def legacy_llm_extract_status():
     return get_extractor_status("llm")
 

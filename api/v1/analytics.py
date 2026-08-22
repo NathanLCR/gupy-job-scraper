@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, select
 
 from database import get_sync_db
-from entities import HardSkill, Job
+from entities import Company, HardSkill, Job
 from entities.associations import job_hard_skills
 from schemas import (
     SkillAnalyticsResponse,
@@ -24,6 +24,7 @@ from services.features_service_hm import (
     get_technology_trends,
     get_top_locations,
 )
+from api.v1.auth import require_admin_auth
 from services.taxonomy_service import (
     get_taxonomy_tree,
     normalize_skill,
@@ -97,12 +98,38 @@ def get_skills_analytics(
     contract_data = get_jobs_by_contract_type(region=region)
     seniority_data = get_jobs_by_seniority(region=region)
 
+    # Real distinct metrics
+    distinct_skills = db.query(HardSkill).count()
+    distinct_companies = db.query(Company).count()
+    raw_markets = db.query(Job.region).filter(Job.region.isnot(None)).distinct().all()
+    markets_count = max(1, len(raw_markets))
+
+    # Workplace distribution
+    wp_counts = defaultdict(int)
+    for j in jobs:
+        wp = (j.workplace_type or "Remote").upper()
+        if "REMOTE" in wp:
+            wp_counts["Remote"] += 1
+        elif "HYBRID" in wp or "HÍBRIDO" in wp:
+            wp_counts["Hybrid"] += 1
+        else:
+            wp_counts["On-site"] += 1
+
+    workplace_dist = [
+        {"name": k, "count": v, "percentage": round((v / max(1, total_jobs)) * 100, 1)}
+        for k, v in sorted(wp_counts.items(), key=lambda x: x[1], reverse=True)
+    ]
+
     return SkillAnalyticsResponse(
         total_jobs=total_jobs,
+        distinct_skills=distinct_skills,
+        distinct_companies=distinct_companies,
+        markets_tracked=markets_count,
         top_skills=demand_items,
         top_locations=top_locs,
         salary_by_seniority=seniority_data,
         contract_types=contract_data,
+        workplace_distribution=workplace_dist,
         region=region,
     )
 
@@ -136,8 +163,16 @@ def get_taxonomies(db: Session = Depends(get_sync_db)):
     return TaxonomyListResponse(categories=tree, total_nodes=total_nodes)
 
 
-@router.post("/normalize", response_model=SkillNormalizeResponse)
-@router.post("/taxonomy/normalize", response_model=SkillNormalizeResponse)
+@router.post(
+    "/normalize",
+    response_model=SkillNormalizeResponse,
+    dependencies=[Depends(require_admin_auth)],
+)
+@router.post(
+    "/taxonomy/normalize",
+    response_model=SkillNormalizeResponse,
+    dependencies=[Depends(require_admin_auth)],
+)
 def normalize_skill_batch(
     body: SkillNormalizeRequest,
     db: Session = Depends(get_sync_db),

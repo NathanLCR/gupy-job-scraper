@@ -14,7 +14,7 @@ api_v1_router = APIRouter()
 
 # Public Candidate Intelligence & Exploration Endpoints
 api_v1_router.include_router(jobs_router)
-api_v1_router.include_router(extract_router)
+api_v1_router.include_router(extract_router, dependencies=[Depends(require_admin_auth)])
 api_v1_router.include_router(match_router)
 api_v1_router.include_router(analytics_router)
 api_v1_router.include_router(auth_router)
@@ -23,5 +23,4 @@ api_v1_router.include_router(auth_router)
 api_v1_router.include_router(tasks_router, dependencies=[Depends(require_admin_auth)])
 api_v1_router.include_router(search_terms_router, dependencies=[Depends(require_admin_auth)])
 api_v1_router.include_router(errors_router, dependencies=[Depends(require_admin_auth)])
-api_v1_router.include_router(stats_router)
-
+api_v1_router.include_router(stats_router, dependencies=[Depends(require_admin_auth)])

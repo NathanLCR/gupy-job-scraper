@@ -1,0 +1,20 @@
+# Cloudflare Pages SPA Routing & Static Assets
+# Public candidate application routes
+/match           /index.html   200
+/jobs            /index.html   200
+/market          /index.html   200
+/how-it-works    /index.html   200
+/dashboard       /index.html   200
+
+# Operator Surface Protection (Spec 08 §3.1)
+/admin*          /api/404.json 404
+/frontend/admin* /api/404.json 404
+/nathan-eh-foda* /api/404.json 404
+/operator*       /api/404.json 404
+
+# API boundary guard (unrouted API requests fail with 404 JSON)
+/api/*           /api/404.json 404
+
+# Static asset rewrite and SPA root fallback
+/frontend/*      /:splat       200
+/*               /index.html   200

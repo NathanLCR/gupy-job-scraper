@@ -313,12 +313,9 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                         db.add(company)
                         db.flush()
 
-                    state_obj = None
+                    state_name = job.state or job.country or job.region or "Global"
+                    state_obj = get_or_create(db, State, name=state_name[:100])
                     city_obj = None
-                    if job.state:
-                        state_obj = get_or_create(db, State, name=job.state[:100])
-                    elif job.country:
-                        state_obj = get_or_create(db, State, name=job.country[:100])
 
                     if job.city:
                         city_obj = get_or_create(db, City, name=job.city[:150], state_id=state_obj.id if state_obj else None)
@@ -381,8 +378,8 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                     db.add(new_job)
                     db.commit()
 
-                    # Throttle LLM calls when running batch extraction
-                    if extractor_type in ("llm", "cascade"):
+                    # Throttle only when external Cloud LLM (Tier 3) is actually invoked
+                    if extractor_type == "llm" or (features and "tier3" in str(features.get("tier_used", ""))):
                         time.sleep(delay)
 
                 except Exception as exc:

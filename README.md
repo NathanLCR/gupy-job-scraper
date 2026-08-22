@@ -2,13 +2,13 @@
 
 # SkillPulse
 
-### Labor market intelligence and semantic job matching for software professionals.
+### Labor market intelligence and explainable semantic job matching for software professionals.
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-316192?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![pgvector](https://img.shields.io/badge/pgvector-384d_HNSW-blue?style=flat)](https://github.com/pgvector/pgvector)
-[![Tests](https://img.shields.io/badge/Tests-108_Passing-10b981?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![Tests](https://img.shields.io/badge/Tests-215_Passing-10b981?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-slate.svg?style=flat)](https://opensource.org/licenses/MIT)
 
 <br/>

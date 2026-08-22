@@ -31,6 +31,11 @@ from services.matcher_service import CandidateMatcherService
 client = TestClient(app)
 
 
+def operator_headers():
+    settings.ADMIN_API_KEY = "test-operator-secret-cloudflare-tests-32"
+    return {"Authorization": "Bearer test-operator-secret-cloudflare-tests-32"}
+
+
 # ==============================================================================
 # 1. EMBEDDINGS & CLOUDFLARE WORKERS AI TESTS
 # ==============================================================================
@@ -198,7 +203,9 @@ class TestCandidateExplanationAndParsing:
         }
 
         try:
-            response = client.post("/api/v1/match/explain", json=payload)
+            response = client.post(
+                "/api/v1/match/explain", json=payload, headers=operator_headers()
+            )
             assert response.status_code == 200
             data = response.json()
             assert data["job_id"] == job_id
@@ -233,14 +240,15 @@ class TestPublicRateLimiting:
              patch("config.settings.RATE_LIMIT_EXTRACT_RPM", 2):
             payload = {"text": "Simple test payload for rate limiter"}
             # Request 1: OK
-            r1 = client.post("/api/v1/extract", json=payload)
+            headers = operator_headers()
+            r1 = client.post("/api/v1/extract", json=payload, headers=headers)
             assert r1.status_code in (200, 429)
 
             # Request 2: OK
-            r2 = client.post("/api/v1/extract", json=payload)
+            r2 = client.post("/api/v1/extract", json=payload, headers=headers)
 
             # Request 3: 429 Too Many Requests
-            r3 = client.post("/api/v1/extract", json=payload)
+            r3 = client.post("/api/v1/extract", json=payload, headers=headers)
             assert r3.status_code == 429
             assert "Retry-After" in r3.headers
             assert "Rate limit exceeded" in r3.json()["detail"]

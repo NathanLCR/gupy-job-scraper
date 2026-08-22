@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import app
+from config import settings
 from database import SessionLocal
 from entities import City, Company, ContractType, HardSkill, Job, NiceToHaveSkill, SoftSkill, State
 from services.embedding_service import (
@@ -452,6 +453,8 @@ def test_api_match_endpoint_with_gap_analysis():
 def test_api_match_endpoint_profile_id_flow():
     """Verify POST /api/v1/match works using existing profile_id."""
     # 1. Create a profile
+    settings.ADMIN_API_KEY = "test-operator-secret-hybrid-tests-32"
+    headers = {"Authorization": "Bearer test-operator-secret-hybrid-tests-32"}
     create_res = client.post(
         "/api/v1/match/profile",
         json={
@@ -460,6 +463,7 @@ def test_api_match_endpoint_profile_id_flow():
             "raw_resume_text": "Fullstack Engineer with Python, React, Docker, and SQL experience.",
             "target_region": "Latin America",
         },
+        headers=headers,
     )
     assert create_res.status_code == 201
     profile_id = create_res.json()["id"]
@@ -487,7 +491,9 @@ def test_api_match_validation_errors():
 
 def test_api_get_candidate_profile_not_found():
     """Verify GET /api/v1/match/profile/{id} returns 404 for non-existent profile."""
-    res_404 = client.get("/api/v1/match/profile/999999")
+    settings.ADMIN_API_KEY = "test-operator-secret-hybrid-tests-32"
+    headers = {"Authorization": "Bearer test-operator-secret-hybrid-tests-32"}
+    res_404 = client.get("/api/v1/match/profile/999999", headers=headers)
     assert res_404.status_code == 404
 
 
@@ -548,5 +554,4 @@ def test_matcher_explainability_and_summary():
             assert math.isclose(match["total_points"], match["fit_score"], abs_tol=0.2)
     finally:
         db.close()
-
 

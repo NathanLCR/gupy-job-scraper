@@ -291,7 +291,10 @@ def test_api_get_ingest_sources():
 
 
 def test_api_get_ingest_status():
-    resp = client.get("/api/v1/jobs/ingest/status")
+    from config import settings
+    settings.ADMIN_API_KEY = "test-operator-secret-ingest-32-chars"
+    headers = {"Authorization": "Bearer test-operator-secret-ingest-32-chars"}
+    resp = client.get("/api/v1/jobs/ingest/status", headers=headers)
     assert resp.status_code == 200
     data = resp.json()
     assert "running" in data
@@ -299,9 +302,13 @@ def test_api_get_ingest_status():
 
 
 def test_api_post_ingest_triggers_task():
+    from config import settings
+    settings.ADMIN_API_KEY = "test-operator-secret-ingest-32-chars"
+    headers = {"Authorization": "Bearer test-operator-secret-ingest-32-chars"}
     resp = client.post(
         "/api/v1/jobs/ingest",
         json={"source": "arbeitnow", "limit": 10, "auto_extract": False},
+        headers=headers,
     )
     assert resp.status_code == 202
     data = resp.json()

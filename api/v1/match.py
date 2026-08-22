@@ -13,6 +13,7 @@ from schemas import (
     SkillGapExplanationResponse,
 )
 from services.matcher_service import CandidateMatcherService
+from api.v1.auth import require_admin_auth
 
 router = APIRouter(prefix="/match", tags=["Candidate Matcher"])
 
@@ -61,7 +62,11 @@ def match_candidate_cv(
         )
 
 
-@router.post("/explain", response_model=SkillGapExplanationResponse)
+@router.post(
+    "/explain",
+    response_model=SkillGapExplanationResponse,
+    dependencies=[Depends(require_admin_auth)],
+)
 def explain_candidate_match(
     request: SkillGapExplanationRequest,
     db: Session = Depends(get_sync_db),
@@ -101,7 +106,12 @@ def explain_candidate_match(
         )
 
 
-@router.post("/profile", response_model=CandidateProfileResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/profile",
+    response_model=CandidateProfileResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_admin_auth)],
+)
 def create_candidate_profile(
     profile_in: CandidateProfileCreate,
     db: Session = Depends(get_sync_db),
@@ -124,7 +134,11 @@ def create_candidate_profile(
     return profile.to_dict()
 
 
-@router.get("/profile/{id}", response_model=CandidateProfileResponse)
+@router.get(
+    "/profile/{id}",
+    response_model=CandidateProfileResponse,
+    dependencies=[Depends(require_admin_auth)],
+)
 def get_candidate_profile(
     id: int,
     db: Session = Depends(get_sync_db),
@@ -137,4 +151,3 @@ def get_candidate_profile(
             detail=f"Candidate profile {id} not found",
         )
     return profile.to_dict()
-
