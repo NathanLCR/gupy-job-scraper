@@ -124,7 +124,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Resolve initial route from URL pathname
     handleInitialRoute();
-    fetchMarketMetrics();
 });
 
 // ==================== Navigation & Router ====================

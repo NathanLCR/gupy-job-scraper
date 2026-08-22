@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 function loadController(fetchImpl, options = {}) {
     const elements = new Map();
+    let domContentLoadedHandler = null;
     const element = (id) => {
         if (!elements.has(id)) {
             elements.set(id, {
@@ -57,9 +58,12 @@ function loadController(fetchImpl, options = {}) {
 
     const logs = { log: [], warn: [], error: [] };
     const document = {
-        addEventListener() {},
+        addEventListener(event, fn) {
+            if (event === 'DOMContentLoaded') domContentLoadedHandler = fn;
+        },
         createElement() { return element(`created-${elements.size}`); },
         getElementById: element,
+        querySelector() { return null; },
         querySelectorAll(selector) {
             return [];
         },
@@ -85,7 +89,17 @@ function loadController(fetchImpl, options = {}) {
     });
     const source = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'script.js'), 'utf8');
     vm.runInContext(source, context, { filename: 'frontend/script.js' });
-    return { context, element, logs, window };
+    context.switchPublicView = context.window.switchPublicView;
+    return {
+        context,
+        element,
+        logs,
+        window,
+        async runDomContentLoaded() {
+            domContentLoadedHandler?.();
+            await new Promise(resolve => setTimeout(resolve, 0));
+        },
+    };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -362,6 +376,33 @@ test('Match rejects incomplete match objects without real point components', asy
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. Market View Truthfulness & Strict Schema Tests
 // ─────────────────────────────────────────────────────────────────────────────
+
+test('Initialization requests only the active view and never duplicates Market reads', async () => {
+    const response404 = {
+        ok: false,
+        status: 404,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ error: 'no API mounted' }),
+    };
+
+    const jobCalls = [];
+    const jobsController = loadController(async (url) => {
+        jobCalls.push(url);
+        return response404;
+    }, { pathname: '/jobs' });
+    await jobsController.runDomContentLoaded();
+    assert.equal(jobCalls.filter(url => url.startsWith('/api/v1/jobs')).length, 1);
+    assert.equal(jobCalls.filter(url => url.startsWith('/api/v1/analytics/overview')).length, 0);
+
+    const marketCalls = [];
+    const marketController = loadController(async (url) => {
+        marketCalls.push(url);
+        return response404;
+    }, { pathname: '/market' });
+    await marketController.runDomContentLoaded();
+    assert.equal(marketCalls.filter(url => url.startsWith('/api/v1/analytics/overview')).length, 1);
+    assert.equal(marketCalls.filter(url => url.startsWith('/api/v1/jobs')).length, 0);
+});
 
 test('Market reports single live data unavailable banner and clears metrics on failure', async () => {
     const { context, element } = loadController(async () => { throw new Error('offline'); });
