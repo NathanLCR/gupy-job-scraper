@@ -1,20 +1,20 @@
 # Cloudflare Pages SPA Routing & Static Assets
-# Public candidate application routes
-/match           /index.html   200
-/jobs            /index.html   200
-/market          /index.html   200
-/how-it-works    /index.html   200
-/dashboard       /index.html   200
+# Proxy named SPA views to the root document. Using /index.html here causes
+# Pages' HTML canonicalization to emit a 308 redirect to /.
+/match           /             200
+/jobs            /             200
+/market          /             200
+/how-it-works    /             200
+/dashboard       /             200
 
-# Operator Surface Protection (Spec 08 §3.1)
-/admin*          /api/404.json 404
-/frontend/admin* /api/404.json 404
-/nathan-eh-foda* /api/404.json 404
-/operator*       /api/404.json 404
+# The public document uses these explicit /frontend/* URLs so the same HTML
+# also works when FastAPI mounts frontend/ at that prefix. Keep this list
+# explicit: a wildcard would intercept retired admin paths before custom 404s.
+/frontend/favicon.png /favicon.png 200
+/frontend/style.css   /style.css   200
+/frontend/config.js   /config.js   200
+/frontend/script.js   /script.js   200
 
-# API boundary guard (unrouted API requests fail with 404 JSON)
-/api/*           /api/404.json 404
-
-# Static asset rewrite and SPA root fallback
-/frontend/*      /:splat       200
-/*               /index.html   200
+# There is deliberately no catch-all or unsupported 404 rewrite here.
+# Pages serves /api/404.html as the nearest custom 404 for unknown /api/*
+# paths, and the top-level /404.html for all other unknown paths.

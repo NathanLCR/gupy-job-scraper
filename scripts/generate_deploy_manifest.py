@@ -23,7 +23,9 @@ RELEASE_FILES = [
     "config.js",
     "_redirects",
     "_headers",
+    "404.html",
     "api/404.json",
+    "api/404.html",
 ]
 
 

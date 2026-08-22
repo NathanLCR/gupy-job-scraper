@@ -86,20 +86,39 @@ def test_frontend_pages_load_environment_config_before_controllers():
         assert client.get(path).status_code == 404, f"{path} must not exist on the /frontend static mount"
 
 
-def test_cloudflare_api_guard_has_a_json_target_before_the_spa_fallback():
-    """Catches a relative /api call being routed into index.html by rule ordering."""
+def test_cloudflare_pages_routes_use_supported_rewrites_and_nearest_json_404():
+    """Catches unsupported 404 rewrites and index.html canonical redirects."""
     redirects = (ROOT / "frontend" / "_redirects").read_text().splitlines()
     active_rules = [line.split() for line in redirects if line.strip() and not line.startswith("#")]
 
-    api_rule_index = next(i for i, rule in enumerate(active_rules) if rule[0] == "/api/*")
-    spa_rule_index = next(i for i, rule in enumerate(active_rules) if rule[0] == "/*")
-    api_rule = active_rules[api_rule_index]
+    supported_codes = {"200", "301", "302", "303", "307", "308"}
+    assert all(len(rule) < 3 or rule[2] in supported_codes for rule in active_rules)
+    assert not any(rule[0] in {"/api/*", "/frontend/*", "/*"} for rule in active_rules)
 
-    assert api_rule_index < spa_rule_index
-    assert api_rule[1:] == ["/api/404.json", "404"]
-    assert (ROOT / "frontend" / "api" / "404.json").read_text().strip() == (
+    for route in ("/match", "/jobs", "/market", "/how-it-works", "/dashboard"):
+        rule = next(rule for rule in active_rules if rule[0] == route)
+        assert rule[1:] == ["/", "200"]
+
+    expected_public_assets = {
+        "/frontend/favicon.png": "/favicon.png",
+        "/frontend/style.css": "/style.css",
+        "/frontend/config.js": "/config.js",
+        "/frontend/script.js": "/script.js",
+    }
+    for source, destination in expected_public_assets.items():
+        rule = next(rule for rule in active_rules if rule[0] == source)
+        assert rule[1:] == [destination, "200"]
+
+    assert (ROOT / "frontend" / "404.html").exists()
+    json_404 = (ROOT / "frontend" / "api" / "404.html").read_text().strip()
+    assert json_404 == (
         '{"error": "no API mounted on this origin — see config.js"}'
     )
+    assert (ROOT / "frontend" / "api" / "404.json").read_text().strip() == json_404
+
+    headers_text = (ROOT / "frontend" / "_headers").read_text()
+    assert "/api/*" in headers_text
+    assert "Content-Type: application/json; charset=utf-8" in headers_text
 
 
 def test_cloudflare_headers_prevent_stale_controller_caching():
@@ -154,7 +173,9 @@ def test_deploy_manifest_generator():
         "config.js",
         "_redirects",
         "_headers",
+        "404.html",
         "api/404.json",
+        "api/404.html",
     ]
     for rf in required_files:
         assert rf in manifest["files"], f"Missing {rf} in manifest"

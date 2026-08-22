@@ -45,7 +45,7 @@ Two architecture facts should be made explicit here because they affect how "the
 
 ### 3.1 Before the production API exists
 
-Cloudflare Pages serves the public frontend only. `window.API_BASE_URL` remains empty, and every same-origin `/api/*` request is terminated by a JSON 404 rule before the SPA fallback.
+Cloudflare Pages serves the public frontend only. `window.API_BASE_URL` remains empty, and every same-origin `/api/*` request is terminated by Pages' nearest custom `api/404.html`, returned as JSON with HTTP 404 before any public shell can render.
 
 The UI displays a clear unavailable state. It must not substitute jobs, metrics, scores, companies, skill gaps, or role counts.
 
@@ -143,20 +143,20 @@ Implement one shared JSON request helper for the public client. It must:
 
 Cloudflare Pages routing must apply in this order. Any deployment where `app.py` itself is the origin instead of Cloudflare Pages must reproduce the same precedence in its own route table and static-mount configuration; `_redirects` has no effect there and must not be treated as satisfying this requirement for that target:
 
-1. static assets;
-2. the explicit SPA view routes `/match`, `/jobs`, `/market`, and `/how-it-works`;
-3. `/api/*` to a small JSON 404 asset with HTTP 404 when no API is mounted;
-4. the SPA catch-all to `index.html`.
+1. explicit `/frontend/` proxies for the four public assets referenced by `index.html` (never a wildcard that could capture retired operator paths);
+2. supported 200 proxies from the explicit SPA view routes `/match`, `/jobs`, `/market`, and `/how-it-works` to `/`;
+3. Pages' nearest-custom-404 resolution to `api/404.html` for missing `/api/*` paths;
+4. the top-level `404.html` for all other unknown paths, including retired operator URLs.
 
-`frontend/api/404.json` must have `Content-Type: application/json; charset=utf-8` and contain no secret or internal hostname.
+Cloudflare Pages does not support 404 rewrites in `_redirects`; such rules are ignored. `frontend/api/404.html` and `frontend/api/404.json` must contain the same credential-free JSON body, and `_headers` must set `Content-Type: application/json; charset=utf-8` for `/api/*`.
 
 ## 6. Deployment artifact requirements
 
-The Pages build must have one documented source directory. The selected output is the repository's `frontend/` directory, preserving `_redirects`, `_headers`, `config.js`, and `api/404.json`.
+The Pages build must have one documented source directory. The selected output is the repository's `frontend/` directory, preserving `_redirects`, `_headers`, `config.js`, `404.html`, `api/404.html`, and `api/404.json`.
 
 Before any production deployment, generate and inspect a deploy manifest containing:
 
-- SHA-256 hashes for `index.html`, `script.js`, `style.css`, `config.js`, `_redirects`, `_headers`, and `api/404.json`;
+- SHA-256 hashes for `index.html`, `script.js`, `style.css`, `config.js`, `_redirects`, `_headers`, `404.html`, `api/404.html`, and `api/404.json`;
 - the Git commit and dirty-worktree status;
 - the configured API origin with credentials and query parameters removed;
 - the intended Cloudflare Pages project and branch.
@@ -202,8 +202,8 @@ Add or extend Node tests to prove:
 Add or extend Python tests to prove:
 
 - `config.js` loads before each controller;
-- the Pages `/api/*` rule precedes the SPA catch-all;
-- `api/404.json` is valid JSON and returns the intended content type in the served artifact;
+- `_redirects` contains only supported status codes and proxies named SPA routes to `/`, not `/index.html`;
+- `api/404.html` and `api/404.json` are identical valid JSON, and `/api/*` receives the intended content type;
 - the API contracts used by the frontend match the Pydantic response models.
 
 ### 8.2 Local browser acceptance
@@ -250,7 +250,7 @@ Production deployment requires explicit user approval. After approval and deploy
 - [x] Market never displays stale or seeded metrics after live failure.
 - [x] Empty valid responses are distinct from unavailable responses.
 - [x] `config.js` loads before both public and admin controllers.
-- [x] Pages `/api/*` returns JSON 404 before the SPA fallback when no API is mounted.
+- [x] Pages' nearest custom 404 returns JSON for `/api/*` before any public shell when no API is mounted.
 - [ ] Deploy artifacts are hashed and reviewed.
 - [x] Local automated and browser acceptance passes.
 - [ ] Production deployment and smoke testing occur only after explicit approval.
