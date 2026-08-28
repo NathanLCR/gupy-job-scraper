@@ -24,16 +24,22 @@
 ### Task 1: Complete the Alembic-owned runtime schema
 
 **Files:**
+- Rename: `migrations/versions/0010_upgrade_pgvector_taxonomies_multiregion.py` → `migrations/versions/0010_pgvector_taxonomies.py` (and its `revision` / docstring)
 - Create: `migrations/versions/0011_runtime_schema_authority.py`
 - Create: `tests/test_runtime_schema_migration.py`
+- Create: `tests/fixtures/legacy_create_all_schema.py` (builds a `create_all()` DB for reconciliation tests)
 - Modify: `database.py:78-108`
 - Test: `tests/test_runtime_schema_migration.py`
 
 **Interfaces:**
-- Consumes: SQLAlchemy `Base.metadata`, current Alembic head `0010_upgrade_pgvector_taxonomies_multiregion`.
-- Produces: Alembic revision `0011_runtime_schema_authority`; test-only `create_test_schema()` behavior remains in `tests/conftest.py`.
+- Consumes: SQLAlchemy `Base.metadata`, renamed head `0010_pgvector_taxonomies`.
+- Produces: Alembic revision `0011_runtime_schema_authority` (inspect-guarded, full `downgrade()`); test-only `create_test_schema()` behavior remains in `tests/conftest.py`.
 
-- [ ] **Step 1: Write a failing migration inventory test**
+- [ ] **Step 0: Rename revision `0010` to fit the 32-char `alembic_version` column**
+
+`revision = "0010_pgvector_taxonomies"` (24 chars). Update the `Revision ID:` docstring line and the filename. Grep confirms nothing else references the old id. This is safe: no `alembic_version` row exists anywhere (verified — local `jobs.db` has no such table). Add `tests/test_runtime_schema_migration.py::test_all_revision_ids_fit_alembic_version_column` asserting every `revision`/`down_revision` string in `migrations/versions/` is ≤ 32 characters.
+
+- [ ] **Step 1: Write a failing migration inventory + reconciliation test**
 
 ```python
 def test_runtime_schema_revision_declares_missing_runtime_objects():
@@ -41,13 +47,22 @@ def test_runtime_schema_revision_declares_missing_runtime_objects():
         "migrations.versions.0011_runtime_schema_authority"
     )
     source = inspect.getsource(migration.upgrade)
-    assert migration.down_revision == "0010_upgrade_pgvector_taxonomies_multiregion"
+    assert migration.down_revision == "0010_pgvector_taxonomies"
     assert "admin_sessions" in source
     assert "llm_extractions" in source
-    assert 'add_column("source"' in source
+    assert "source" in source
+
+def test_0011_reconciles_a_create_all_database(pg_or_sqlite_engine):
+    # Build the schema the way the retired lifespan did: create_all() + a
+    # NULLABLE jobs.source column, and NO alembic_version row.
+    build_legacy_create_all_schema(pg_or_sqlite_engine)
+    alembic_stamp(pg_or_sqlite_engine, "0010_pgvector_taxonomies")
+    alembic_upgrade_head(pg_or_sqlite_engine)            # must NOT raise
+    assert column_is_not_null(pg_or_sqlite_engine, "jobs", "source")
+    assert table_exists(pg_or_sqlite_engine, "admin_sessions")
 ```
 
-Also add a PostgreSQL/SQLite migration acceptance test that upgrades a fresh database to head and verifies `admin_sessions`, `llm_extractions`, and `source` on both `jobs` and `jobs_posts`.
+Also add a fresh-database acceptance test: empty DB → `alembic upgrade head` → `admin_sessions`, `llm_extractions`, and `source` (NOT NULL) on both `jobs` and `jobs_posts`; then `alembic downgrade 0010_pgvector_taxonomies` → those objects are gone; then `upgrade head` again succeeds.
 
 - [ ] **Step 2: Run the focused test and verify the missing revision fails**
 
@@ -55,23 +70,24 @@ Run: `.venv/bin/python -m pytest tests/test_runtime_schema_migration.py -v`
 
 Expected: FAIL because `0011_runtime_schema_authority` does not exist.
 
-- [ ] **Step 3: Add revision `0011_runtime_schema_authority`**
-
-Implement an idempotent dialect-aware migration that:
+- [ ] **Step 3: Add revision `0011_runtime_schema_authority` (inspect-guarded, reconciling)**
 
 ```python
 revision = "0011_runtime_schema_authority"
-down_revision = "0010_upgrade_pgvector_taxonomies_multiregion"
+down_revision = "0010_pgvector_taxonomies"
 ```
 
-- adds `jobs.source VARCHAR(50) NOT NULL DEFAULT 'gupy'` plus `ix_jobs_source` when absent;
-- adds `jobs_posts.source VARCHAR(50) NOT NULL DEFAULT 'gupy'` plus `ix_jobs_posts_source` when absent;
-- creates `admin_sessions` exactly as `entities/admin_session.py` declares it;
-- creates `llm_extractions` exactly as `entities/llm_extraction_cache.py` declares it;
-- creates unique/index constraints for session token hashes and extraction fingerprints;
-- drops those objects in reverse dependency order in `downgrade()`.
+Using SQLAlchemy `inspect()` at the top of `upgrade()`:
 
-Use SQLAlchemy inspection before compatibility column additions because current local databases may already contain runtime-created columns. Do not use `CREATE TABLE IF NOT EXISTS` to hide incompatible existing schemas: inspect and raise on incompatible types or nullability.
+- `jobs.source` / `jobs_posts.source`:
+  - if the column is **absent** → add `VARCHAR(50) NOT NULL DEFAULT 'gupy'` + `ix_jobs_source` / `ix_jobs_posts_source`.
+  - if the column is **present but nullable** (the retired-lifespan case) → `UPDATE … SET source='gupy' WHERE source IS NULL`, then `ALTER COLUMN source SET NOT NULL` and `SET DEFAULT 'gupy'`, and create the index if absent.
+  - if the column is present with an incompatible **type** → raise a clear error (this is genuinely unrecoverable and must not be silently masked).
+- `admin_sessions`, `llm_extractions`, their unique/index constraints on `token_hash` / `fingerprint`: create only when `inspector.has_table(...)` is false; when present, assert the columns/nullability match the entity and raise only on a real mismatch.
+- Never use `CREATE TABLE IF NOT EXISTS`; use the inspector.
+- `downgrade()` drops `llm_extractions`, `admin_sessions`, the `source` indexes, and reverts `source` to nullable (does not drop it — data preservation), in reverse dependency order.
+
+Document in the migration docstring: pre-existing `create_all` databases must be `alembic stamp 0010_pgvector_taxonomies`'d once before the first `alembic upgrade head`.
 
 - [ ] **Step 4: Remove runtime column migration from `database.init_db()`**
 
@@ -94,9 +110,11 @@ Expected: PASS; fresh upgrades contain every runtime table/column and model test
 - [ ] **Step 6: Commit the schema authority change**
 
 ```bash
-git add migrations/versions/0011_runtime_schema_authority.py database.py tests/test_runtime_schema_migration.py
+git add migrations/versions/ database.py tests/test_runtime_schema_migration.py tests/fixtures/legacy_create_all_schema.py
 git commit -m "fix: make Alembic authoritative for runtime schema"
 ```
+
+Note: `git add migrations/versions/` picks up both the renamed `0010_pgvector_taxonomies.py` and the deletion of the old filename.
 
 ---
 
@@ -122,7 +140,7 @@ def test_readiness_requires_query_and_current_revision(monkeypatch):
     result = readiness.check_database_readiness()
     assert result.ready is True
     assert result.database == "connected"
-    assert result.schema == "current"
+    assert result.schema_state == "current"
 
 def test_readiness_hides_internal_error(monkeypatch):
     monkeypatch.setattr(readiness, "get_engine", lambda: BrokenEngine("postgresql://secret"))
@@ -147,12 +165,12 @@ Expected: FAIL importing `services.readiness_service`.
 class ReadinessResult:
     ready: bool
     database: Literal["connected", "unavailable"]
-    schema: Literal["current", "outdated", "unknown"]
+    schema_state: Literal["current", "outdated", "unknown"]   # NOT `schema` — shadows BaseModel
     failure_category: str | None = None
     public_message: str | None = None
 ```
 
-`get_current_revision(connection)` uses `MigrationContext.configure(connection).get_current_revision()`. `get_expected_head()` loads the repository's Alembic `ScriptDirectory` and calls `get_current_head()`.
+`get_current_revision(connection)` uses `MigrationContext.configure(connection).get_current_revision()`. `get_expected_head()` loads the repository's Alembic `ScriptDirectory` (from `migrations/`, per `alembic.ini`) and calls `get_current_head()` — no hard-coded revision string. Delete the stray top-level `alembic/` directory (empty `versions/`, `target_metadata = None`) so nothing resolves the wrong script location.
 
 - [ ] **Step 4: Implement bounded database readiness**
 
@@ -169,13 +187,14 @@ class LivenessResponse(BaseModel):
     version: str
 
 class ReadinessResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     status: Literal["ready", "not_ready"]
     database: Literal["connected", "unavailable"]
-    schema: Literal["current", "outdated", "unknown"]
+    schema_state: Literal["current", "outdated", "unknown"] = Field(serialization_alias="schema")
     version: str
 ```
 
-Remove the timestamp and environment fields from public health responses.
+The emitted JSON key is `schema` (matches runtime spec §3.2). Add a test asserting `response.json()` contains `"schema"` and not `"schema_state"`. Remove the timestamp and environment fields from public health responses.
 
 - [ ] **Step 6: Run the focused service and schema tests**
 
@@ -196,13 +215,19 @@ git commit -m "feat: add truthful database readiness service"
 
 **Files:**
 - Modify: `app.py:44-53,322-330,339-343`
+- Modify: `tests/conftest.py` (build the test DB with `alembic upgrade head`, not `init_db()`)
 - Create: `tests/test_runtime_startup_and_health.py`
-- Modify: `tests/test_api_v1.py:17-23`
+- Modify: `tests/test_api_v1.py:14-20`
+- Modify: `tests/test_spec08_admin_security.py` (the `/health` → 200 assertion in `test_public_routes_remain_accessible`)
 - Test: `tests/test_runtime_startup_and_health.py`
 
 **Interfaces:**
 - Consumes: `check_database_readiness()`, `LivenessResponse`, `ReadinessResponse` from Task 2.
 - Produces: `GET /health/live`, `GET /health/ready`, compatibility `GET /health`, and fail-fast lifespan startup.
+
+- [ ] **Step 0: Make the test database Alembic-managed**
+
+In `tests/conftest.py`, replace the `init_db()` call in `setup_test_database` with `subprocess`-run `alembic upgrade head` (or `command.upgrade(config, "head")`) against the disposable `test_jobs.db`, so `/health/ready` sees a real `alembic_version` at head. Keep a separate opt-in fixture that uses `Base.metadata.create_all()` for the specific tests that assert test-mode-without-revision behavior. Re-grep `tests/` and `tests/*.test.js` for `"/health"` and fix every assertion that expects `200`/`database=="connected"` from the unconditional handler.
 
 - [ ] **Step 1: Write failing API tests for probe semantics**
 
@@ -242,6 +267,8 @@ async def lifespan(app: FastAPI):
 ```
 
 Do not catch the production `RuntimeError`. Do not call `init_db()`. In development/test, retain the result in `app.state.startup_readiness` and log its stable category; readiness remains `503` until the dependency is actually ready.
+
+The `RuntimeError` must reach the ASGI server so the process exits non-zero. Verify in Task 6 Step 4 / §7.3 with an actual container run (`docker compose up` against a stale/absent schema, assert the `api` container exits non-zero) — not only a unit test that the coroutine raises.
 
 - [ ] **Step 4: Add liveness/readiness handlers**
 
@@ -342,14 +369,19 @@ git commit -m "fix: provide valid development and production config templates"
 
 ```python
 def test_no_duplicate_method_path_pairs():
-    pairs = []
+    # Map (method, path) -> set of endpoint callables. A pair owned by two
+    # *different* handlers is the bug. Spec §5.3 excludes deliberate aliases
+    # that resolve to the same handler (e.g. /health and /health/ready
+    # sharing one _readiness_response()).
+    owners: dict[tuple[str, str], set] = defaultdict(set)
     for route in app.routes:
         path = getattr(route, "path", None)
+        endpoint = getattr(route, "endpoint", None)
         for method in getattr(route, "methods", set()):
             if path and method not in {"HEAD", "OPTIONS"}:
-                pairs.append((method, path))
-    duplicates = [pair for pair, count in Counter(pairs).items() if count > 1]
-    assert duplicates == []
+                owners[(method, path)].add(endpoint)
+    conflicts = {pair: fns for pair, fns in owners.items() if len(fns) > 1}
+    assert conflicts == {}
 ```
 
 Also assert `/jobs` returns HTML, `/api/v1/jobs` returns JSON, and unversioned `/jobs/1` plus `/jobs/export` are not present in OpenAPI.

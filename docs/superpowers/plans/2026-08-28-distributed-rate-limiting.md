@@ -59,7 +59,9 @@ Expected: FAIL because the new settings/parser do not exist.
 - [ ] **Step 3: Implement typed settings and parser**
 
 ```python
+REDIS_URL: Optional[str] = None          # was: "redis://localhost:6379/0"
 RATE_LIMIT_KEY_SALT: Optional[str] = None
+RATE_LIMIT_SHADOW: bool = False          # compute + log decisions, enforce nothing
 TRUSTED_PROXY_CIDRS: str = "[]"
 TRUST_CLOUDFLARE_CONNECTING_IP: bool = False
 
@@ -68,7 +70,9 @@ def get_trusted_proxy_networks(self) -> tuple[ipaddress.IPv4Network | ipaddress.
     return tuple(ipaddress.ip_network(value, strict=False) for value in values)
 ```
 
-Validate list shape and reject universal networks in production. Validate without including the salt or Redis URL in error messages.
+Changing `REDIS_URL` to `None` makes "enabled rate limiting without Redis" a rejectable state. Every place that already reads `settings.REDIS_URL` (Celery config, `database`/health) must tolerate `None` or fall back explicitly — grep and fix. Docker Compose and both env examples set `REDIS_URL` explicitly.
+
+Production validation (`validate_runtime_config`) rejects: `RATE_LIMIT_ENABLED` with `REDIS_URL` unset; `REDIS_URL` set but unreachable on a bounded startup ping; missing/short/placeholder salt; invalid or universal `TRUSTED_PROXY_CIDRS`; `TRUST_CLOUDFLARE_CONNECTING_IP` without a trusted CIDR; non-positive limits/windows. Validate without including the salt or Redis URL in error messages.
 
 - [ ] **Step 4: Update environment examples**
 
@@ -122,7 +126,7 @@ def test_trusted_proxy_uses_valid_cloudflare_header_when_enabled():
     assert identity.normalized_ip == "2001:db8::1"
 ```
 
-Add invalid/multiple header, IPv4-mapped IPv6 normalization, trusted XFF, and digest-not-containing-IP cases.
+Add invalid/multiple header, IPv4-mapped IPv6 normalization, and digest-not-containing-IP cases. For trusted XFF, assert the **right-most non-proxy** element wins: `make_request(peer="10.0.0.2", headers={"x-forwarded-for": "1.2.3.4, 203.0.113.9, 10.0.0.2"}, trusted_networks=(ip_network("10.0.0.0/8"),))` resolves to `203.0.113.9`, and rotating the left-most value does not change the subject.
 
 - [ ] **Step 2: Run tests and verify the resolver is absent**
 
@@ -139,7 +143,9 @@ class ClientIdentity:
     source: Literal["peer", "cf-connecting-ip", "x-forwarded-for"]
 ```
 
-Parse with `ipaddress.ip_address()`. Convert IPv4-mapped IPv6 addresses to their IPv4 form. Treat commas in `CF-Connecting-IP` as invalid; for XFF, use the first valid trimmed element only when the immediate peer is trusted.
+Parse with `ipaddress.ip_address()`. Convert IPv4-mapped IPv6 addresses to their IPv4 form. Treat commas in `CF-Connecting-IP` as invalid.
+
+For `X-Forwarded-For`, only when the immediate peer is trusted: split on commas, parse+normalize each element, then walk **from the right** and take the first address that is not itself in `trusted_networks`. Trusted proxies append the real client and pass through whatever the client sent, so the left-most element is attacker-controlled (spec §4.2). If every element is a trusted-proxy address or nothing parses, fall through to the peer and emit `client_identity_peer_fallback`.
 
 - [ ] **Step 4: Implement HMAC subject digest**
 
@@ -279,8 +285,8 @@ git commit -m "feat: add atomic Redis sliding-window limiter"
     [
         ("/api/v1/jobs/search/hybrid", "public_search", 60),
         ("/api/v1/match", "public_match", 20),
-        ("/api/v1/match/explain", "public_explain", 5),
-        ("/api/v1/extract", "public_extract", 10),
+        ("/api/v1/match/explain", "ai_explain", 5),
+        ("/api/v1/extract", "ai_extract", 10),
     ],
 )
 def test_policy_maps_normalized_route_groups(path, scope, limit):
@@ -306,13 +312,15 @@ class RateLimitPolicy:
     window_seconds: int
 ```
 
-Match normalized method/path against an ordered table so `/api/v1/match/explain` is checked before `/api/v1/match`. Return no policy for health probes, GET requests, and unlisted routes.
+Match normalized method/path against an ordered table so `/api/v1/match/explain` is checked before `/api/v1/match`. Return no policy for health probes, GET requests, and unlisted routes. Scopes `ai_explain` / `ai_extract` map operator-authenticated routes and are enforced anyway (spec §5): the middleware runs before route auth, so an unauthenticated caller still consumes that identity's `ai_*` allowance before being `401`'d — that is intentional and covered by a test.
 
 - [ ] **Step 4: Replace `_RATE_LIMIT_STORE` middleware logic**
 
 Delete `_RATE_LIMIT_STORE`, `defaultdict`, timestamp filtering, and direct proxy-header reads. Resolve identity through Task 2, HMAC it, call the limiter once, and attach `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` to allowed responses.
 
 Return JSON `429` with `Retry-After`, `Cache-Control: no-store`, and request ID when denied. Map `RateLimitUnavailableError` to JSON `503` without calling the protected endpoint.
+
+When `settings.RATE_LIMIT_SHADOW` is true: still resolve identity and call the limiter, still emit the §9 events (tagged `shadow=true`), but never return `429`/`503` — let the request through. This is the rollout observe-only state (spec §11). Add a test that a would-be-denied request returns its normal 2xx under shadow mode while logging the rejection decision.
 
 - [ ] **Step 5: Run public middleware/API tests**
 
@@ -366,6 +374,8 @@ Expected: FAIL because `_FAILED_LOGINS` is local to one process.
 
 Delete `_FAILED_LOGINS`, `_check_login_rate_limit`, `_record_login_failure`, and `_record_login_success`. Resolve/digest identity at the start of `admin_login`.
 
+`tests/test_spec08_admin_security.py` imports `_FAILED_LOGINS` at module scope (`from api.v1.auth import … _FAILED_LOGINS`) and calls `.clear()` in fixtures — that import breaks collection of the whole file the moment the symbol is gone. In the same commit: remove that import, replace the fixture teardown with a Redis-key flush against the test limiter, and update `test_login_rate_limiting`'s assertion on the old message string (`"Too many failed login attempts"`) to the new `429` body (`"Rate limit exceeded. Please try again later."`).
+
 Call `peek("operator_login_failure", digest, 5, 900)` before credential comparison. To count only failures, use the operations defined in Task 3:
 
 ```python
@@ -406,35 +416,41 @@ git commit -m "fix: distribute operator login failure limits"
 
 **Interfaces:**
 - Consumes: runtime readiness service and rate-limit settings.
-- Produces: `check_redis_readiness() -> DependencyReadiness`, rate-limit-aware `/health/ready`.
+- Produces: `check_redis_readiness() -> DependencyReadiness`, Redis-aware `/health/ready` that does **not** gate traffic admission on Redis (spec §7).
 
-- [ ] **Step 1: Write failing enabled/disabled Redis readiness tests**
+- [ ] **Step 1: Write failing Redis readiness tests (Redis does not gate admission)**
 
 ```python
-def test_enabled_limiter_requires_redis(monkeypatch):
+def test_redis_outage_keeps_readiness_200_but_reports_degraded(monkeypatch):
     monkeypatch.setattr(settings, "RATE_LIMIT_ENABLED", True)
-    monkeypatch.setattr(readiness, "check_redis_readiness", lambda: unavailable_dependency("redis"))
+    monkeypatch.setattr(readiness, "check_redis_readiness", lambda: degraded_dependency("redis"))
     response = client.get("/health/ready")
-    assert response.status_code == 503
+    assert response.status_code == 200
+    assert response.json()["dependencies"]["database"] == "connected"
+    assert response.json()["dependencies"]["redis"] == "degraded"
+
+def test_database_outage_still_makes_readiness_503(monkeypatch):
+    monkeypatch.setattr(app, "check_database_readiness", lambda: unavailable_result())
+    assert client.get("/health/ready").status_code == 503
 
 def test_liveness_ignores_redis(monkeypatch):
     monkeypatch.setattr(readiness, "check_redis_readiness", Mock(side_effect=AssertionError))
     assert client.get("/health/live").status_code == 200
 ```
 
-- [ ] **Step 2: Run tests and verify readiness ignores Redis**
+- [ ] **Step 2: Run tests and verify readiness has no Redis state yet**
 
 Run: `.venv/bin/python -m pytest tests/test_rate_limit_readiness.py -v`
 
-Expected: FAIL because readiness has no Redis dependency state.
+Expected: FAIL because readiness has no Redis dependency reporting.
 
-- [ ] **Step 3: Add bounded Redis readiness**
+- [ ] **Step 3: Add bounded Redis readiness as a non-gating detail**
 
-Ping Redis with a one-second socket/connect timeout only when rate limiting is enabled. Extend the private readiness result with Redis state, but return only `dependencies: {"database": "connected", "redis": "connected"}` or unavailable categories publicly—never URLs.
+Ping Redis with a one-second socket/connect timeout only when rate limiting is enabled. Add its state to the readiness response as `dependencies.redis` = `"connected"` / `"degraded"` (never URLs). **Only the database result decides the 200/503 status code** — a Redis outage leaves readiness `200` so unmetered reads and liveness stay reachable (spec §7). The per-request fail-closed `503` from Task 4 / Task 5 is what protects quota during a Redis outage.
 
 - [ ] **Step 4: Configure deployment health dependencies**
 
-Ensure the API service depends on healthy Redis and PostgreSQL in Compose. Add Redis health-check authentication configuration if production Redis requires it; do not embed a password in the Compose file.
+Keep the API service `depends_on` PostgreSQL healthy (blocking) and Redis healthy (start ordering only — a later Redis failure must not cascade to the API container via readiness). Add Redis health-check authentication configuration if production Redis requires it; do not embed a password in the Compose file.
 
 - [ ] **Step 5: Run readiness and Compose tests**
 
@@ -445,7 +461,7 @@ Run:
 docker compose config --quiet
 ```
 
-Expected: PASS; Redis loss affects readiness, not liveness.
+Expected: PASS; Redis loss is reported in `dependencies.redis` but does not change the readiness status code or affect liveness.
 
 - [ ] **Step 6: Commit readiness integration**
 

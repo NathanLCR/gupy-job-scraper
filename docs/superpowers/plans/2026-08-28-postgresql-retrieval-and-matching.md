@@ -19,6 +19,26 @@
 - Missing/incompatible job embeddings contribute zero semantic points, never a neutral 0.5 similarity.
 - PostgreSQL-specific behavior requires PostgreSQL integration tests; SQLite unit tests do not prove index use.
 - Preserve existing response fields; new count/mode fields are additive and optional branch scores are nullable.
+- Every PostgreSQL-only test carries `@pytest.mark.postgres` and is skipped explicitly when no PostgreSQL is configured. `POSTGRES_INDEXED_RETRIEVAL_ENABLED` selects the served implementation at request time; the pre-Phase-2 in-memory path stays in the codebase until a named follow-up release.
+
+---
+
+### Task 0: PostgreSQL + pgvector test harness
+
+**Files:**
+- Modify: `tests/conftest.py`
+- Create: `tests/conftest_postgres.py` (or a `postgres_db` fixture in `conftest.py`)
+- Create: `pytest.ini` / modify `pyproject.toml` (register the `postgres` marker)
+- Modify: `docker-compose.yml` (a `test-db` service or reuse `db`) and the CI workflow (Postgres 16 + pgvector service container, `TEST_DATABASE_URL`)
+- Create: `tests/test_postgres_harness.py`
+
+**Interfaces:**
+- Produces: `postgres_db` session fixture (schema built by `alembic upgrade head` against a disposable database from `TEST_DATABASE_URL`), `pytest.mark.postgres`, a `skip` when `TEST_DATABASE_URL` is unset.
+
+- [ ] **Step 1:** Register the `postgres` marker; add `postgres_db` that creates a scratch database (or schema) per session, runs `alembic upgrade head`, yields a `Session`, and drops it on teardown. `pgvector` extension is created by migration `0010_pgvector_taxonomies`.
+- [ ] **Step 2:** Add the CI service container (`pgvector/pgvector:pg16`) and export `TEST_DATABASE_URL`. Local runs without it skip `postgres`-marked tests with a visible reason.
+- [ ] **Step 3:** `tests/test_postgres_harness.py` asserts the fixture connects, `vector` extension exists, and `alembic_version` is at head.
+- [ ] **Step 4:** Commit: `git add tests/ pytest.ini docker-compose.yml .github/ && git commit -m "test: add PostgreSQL + pgvector integration harness"`
 
 ---
 
@@ -79,18 +99,25 @@ For PostgreSQL:
 - add the three columns;
 - create `refresh_job_search_document(target_job_id bigint)` using `setweight(to_tsvector('english', coalesce(...)), 'A'|'B'|'C'|'D')`;
 - aggregate hard skills with `string_agg(DISTINCT hard_skills.name, ' ')`;
-- aggregate tech stack with `jsonb_array_elements_text(coalesce(jobs.tech_stack::jsonb, '[]'::jsonb))`;
-- create triggers with stable names `trg_jobs_refresh_search_document`, `trg_job_hard_skills_refresh_search_document`, `trg_hard_skills_refresh_search_document`, and `trg_companies_refresh_search_document`;
-- create `ix_jobs_search_document_gin USING gin(search_document)`;
-- replace `ix_jobs_embedding_hnsw` with a partial cosine HNSW index `WHERE embedding IS NOT NULL`.
+- aggregate tech stack by joining a `LATERAL jsonb_array_elements_text(coalesce(jobs.tech_stack::jsonb, '[]'::jsonb))` and `string_agg`-ing the values into one text token before `to_tsvector` (the set-returning function cannot be passed directly to `to_tsvector`);
+- create the `AFTER` search-document triggers with stable names `trg_jobs_refresh_search_document`, `trg_job_hard_skills_refresh_search_document`, `trg_hard_skills_refresh_search_document`, and `trg_companies_refresh_search_document`;
+- create a **separate `BEFORE INSERT OR UPDATE` trigger** `trg_jobs_invalidate_embedding` on `jobs` (see Step 5);
+- create `ix_jobs_search_document_gin USING gin(search_document)` on the (still empty) column inside the migration;
+- rebuild `ix_jobs_embedding_hnsw` as a partial cosine index `WHERE embedding IS NOT NULL` **outside the migration transaction**: wrap the `DROP INDEX` + `CREATE INDEX CONCURRENTLY … WHERE embedding IS NOT NULL` in `with op.get_context().autocommit_block():`, drop the old index only after the new one reports `indisvalid = true`, and log the operation. If `CONCURRENTLY` is not viable in the target migration runner, the migration prints the exact commands as a required manual operational step and the activation gate (Task 7) refuses to activate until the partial index exists and is valid.
 
 For SQLite, add provenance columns and a text `search_document`; skip PostgreSQL functions, triggers, and indexes that SQLite cannot support.
 
+`downgrade()` (both dialects where applicable): drop `trg_jobs_invalidate_embedding`, then the four `AFTER` triggers, then `refresh_job_search_document`, then `ix_jobs_search_document_gin`, then restore `ix_jobs_embedding_hnsw` to its prior non-partial definition (CONCURRENTLY, autocommit block), then drop `search_document`, `embedding_model`, `embedding_updated_at`.
+
 - [ ] **Step 5: Implement precise trigger behavior**
 
-The jobs trigger refreshes after insert or update of `job_title`, `tech_stack`, `description`, `seniority`, `company_id`, `city_id`, `state_id`, `region`, or `workplace_type`. The association trigger refreshes old and new job IDs. Company and hard-skill update triggers refresh only jobs referencing the changed row.
+The `AFTER` jobs trigger refreshes the search document after insert or update of `job_title`, `tech_stack`, `description`, `seniority`, `company_id`, `city_id`, `state_id`, `region`, or `workplace_type`. The association trigger refreshes old and new job IDs. Company and hard-skill update triggers refresh only jobs referencing the changed row.
 
-In the same jobs trigger path, changes to title, tech stack, description, seniority, or hard-skill associations set `embedding`, `embedding_model`, and `embedding_updated_at` to `NULL` before the search document refresh. A hard-skill name update performs the same invalidation for every associated job before refreshing its search document. Company-name updates refresh lexical documents without invalidating embeddings because company name is not part of `_format_job_text()`.
+**Embedding invalidation is a `BEFORE INSERT OR UPDATE` trigger** (`trg_jobs_invalidate_embedding`): when `NEW.job_title`, `NEW.tech_stack`, `NEW.description`, or `NEW.seniority` differs from `OLD`, it sets `NEW.embedding := NULL`, `NEW.embedding_model := NULL`, `NEW.embedding_updated_at := NULL`. Mutating `NEW` in a `BEFORE` trigger writes those columns in the same row write with no recursive trigger firing.
+
+For changes that cannot see `jobs.NEW` — `job_hard_skills` insert/delete and `hard_skills.name` update — the association/hard-skill trigger issues `UPDATE jobs SET embedding=NULL, embedding_model=NULL, embedding_updated_at=NULL WHERE id = ANY(:affected)` guarded by `WHEN (pg_trigger_depth() = 1)` (or an equivalent re-entry guard) so the resulting `BEFORE`/`AFTER` jobs-trigger pass does not recurse. Company-name updates refresh the lexical document only and never null embeddings (company name is not in `_format_job_text()`).
+
+Add a `@pytest.mark.postgres` test: a single `UPDATE jobs SET description=… WHERE id=1` nulls the embedding, refreshes `search_document`, completes without stack-depth errors, and the row is still returned by a lexical search.
 
 - [ ] **Step 6: Run migration upgrade/downgrade tests**
 
@@ -149,10 +176,21 @@ Expected: FAIL because the exception, active model setting, and persisted proven
 class EmbeddingUnavailableError(RuntimeError):
     pass
 
-ACTIVE_EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
+# The identifier of the model the CONFIGURED provider actually runs.
+# Cloudflare Workers AI is the real production embedder today
+# (sentence-transformers is not an installed dependency), so:
+EMBEDDING_PROVIDER: Literal["cloudflare", "sentence_transformers", "hash_dev_only"] = "cloudflare"
+ACTIVE_EMBEDDING_MODEL: str = ""   # resolved at startup, see below
 ```
 
-`embed_query()` must enforce 384 dimensions and refuse deterministic fallback in production. Retain deterministic fallback only for `development` and `test`.
+Resolution + validation at startup:
+
+- `cloudflare` → `ACTIVE_EMBEDDING_MODEL = settings.CF_EMBEDDING_MODEL` (`@cf/baai/bge-small-en-v1.5`); require `CF_ACCOUNT_ID` + `CF_API_TOKEN`.
+- `sentence_transformers` → add `sentence-transformers` to `requirements.txt`; `ACTIVE_EMBEDDING_MODEL` is its fully-qualified name; require the package importable.
+- `hash_dev_only` → allowed only when `ENVIRONMENT in {"development","test"}`.
+- Production startup raises if `EMBEDDING_PROVIDER` is a real provider but its credentials/package are missing, or if `ACTIVE_EMBEDDING_MODEL` ends up empty.
+
+`embed_query()` / a new `embed_query_checked()` returns `tuple[list[float], str]` (vector, model-id) or raises `EmbeddingUnavailableError`. It never returns a hash vector in production. The existing `get_embedding()` cascade is refactored so callers can tell "provider produced this" from "fell back": the fallback branch raises in production and only returns in dev/test. Reconcile/deprecate the overlapping `EMBEDDING_MODEL` setting (keep as an alias of `ACTIVE_EMBEDDING_MODEL` or remove).
 
 - [ ] **Step 4: Persist provenance when extraction creates a job**
 
@@ -249,7 +287,7 @@ class RetrievalResult:
 
 - [ ] **Step 4: Implement filter and branch queries**
 
-`_dense_hits()` uses `Job.embedding.cosine_distance(query_vector)`, filters `Job.embedding_model == settings.ACTIVE_EMBEDDING_MODEL`, orders by distance then ID, and limits the branch. `_sparse_hits()` uses `websearch_to_tsquery('english', bindparam('query'))`, `@@`, and `ts_rank_cd`, orders by score descending then ID, and limits the branch.
+`_dense_hits()` executes `SET LOCAL hnsw.ef_search = <pool_size>` on the session first (pool size clamped, e.g. `min(pool_size, 1000)`), then uses `Job.embedding.cosine_distance(query_vector)`, filters `Job.embedding_model == settings.ACTIVE_EMBEDDING_MODEL AND Job.embedding IS NOT NULL`, orders by distance then ID, and limits the branch. `_sparse_hits()` uses `websearch_to_tsquery('english', bindparam('query'))`, `@@`, and `ts_rank_cd`, orders by score descending then ID, and limits the branch. Add a `@pytest.mark.postgres` test seeding > 300 embedded jobs that asserts the dense branch returns the full requested pool (not ~40) — i.e. `ef_search` is actually applied.
 
 Build every filter with SQLAlchemy expressions. Do not use Python post-filtering or raw string interpolation.
 
@@ -289,20 +327,31 @@ git commit -m "feat: add bounded PostgreSQL hybrid retrieval"
 - [ ] **Step 1: Write failing request/response and no-job-embedding tests**
 
 ```python
-def test_hybrid_search_embeds_query_once_and_never_jobs(client, monkeypatch):
-    query_embed = Mock(return_value=[0.1] * 384)
-    monkeypatch.setattr(retrieval_module, "embed_query", query_embed)
+@pytest.mark.postgres
+def test_hybrid_search_embeds_query_once_and_never_jobs(pg_client, monkeypatch):
+    # pg_client: TestClient bound to an app configured with
+    # POSTGRES_INDEXED_RETRIEVAL_ENABLED=true and the postgres_db engine.
+    query_embed = Mock(return_value=([0.1] * 384, "test-model"))
+    monkeypatch.setattr(retrieval_module, "embed_query_checked", query_embed)
     monkeypatch.setattr(embedding_module, "embed_job", Mock(side_effect=AssertionError))
-    response = client.post("/api/v1/jobs/search/hybrid", json={"query": "python"})
+    response = pg_client.post("/api/v1/jobs/search/hybrid", json={"query": "python"})
     assert response.status_code == 200
     query_embed.assert_called_once()
 
 def test_zero_total_weight_is_rejected(client):
+    # Pure request validation — runs on the default SQLite client.
     response = client.post(
         "/api/v1/jobs/search/hybrid",
         json={"query": "python", "dense_weight": 0, "sparse_weight": 0},
     )
     assert response.status_code == 422
+
+def test_flag_off_uses_legacy_in_memory_path(client, monkeypatch):
+    # With POSTGRES_INDEXED_RETRIEVAL_ENABLED=false (default), the pre-Phase-2
+    # implementation still serves search on SQLite.
+    monkeypatch.setattr(settings, "POSTGRES_INDEXED_RETRIEVAL_ENABLED", False)
+    response = client.post("/api/v1/jobs/search/hybrid", json={"query": "python"})
+    assert response.status_code == 200
 ```
 
 - [ ] **Step 2: Run tests and observe current full-scan behavior**
@@ -321,11 +370,19 @@ retrieval_mode: Literal["hybrid", "dense", "lexical"]
 
 Add a model validator requiring `dense_weight + sparse_weight > 0` after bounds validation and trim/query non-whitespace validation.
 
-- [ ] **Step 4: Reduce `hybrid_search_service.py` to orchestration**
+- [ ] **Step 4: Add the indexed path behind the feature flag; keep the legacy path**
 
-Delete `_compute_sparse_text_score()` and all loops over `filtered_jobs`. Call the repository, load only selected job IDs with eager relationships, preserve fused order through an ID-position map, and return `HybridSearchResultItem` values with nullable branch fields.
+`hybrid_search_jobs()` becomes a dispatcher:
 
-Map `EmbeddingUnavailableError` to a service-level exception that `api/v1/jobs.py` returns as HTTP `503` with the standard request ID.
+```python
+if settings.POSTGRES_INDEXED_RETRIEVAL_ENABLED:
+    return _hybrid_search_indexed(...)   # new: calls PostgresRetrievalService
+return _hybrid_search_in_memory(...)     # existing body, unchanged
+```
+
+`_hybrid_search_indexed()` calls the repository, loads only selected job IDs with eager relationships, preserves fused order through an ID-position map, and returns `HybridSearchResultItem` values with nullable branch fields and `retrieval_mode`. Do **not** delete `_compute_sparse_text_score()` or the `filtered_jobs` loops in this task — they are the `_hybrid_search_in_memory()` body and stay until the follow-up removal release (retrieval spec §6.3, §9). The legacy path keeps returning its current non-null branch fields and `retrieval_mode="hybrid"` for contract compatibility.
+
+Map `EmbeddingUnavailableError` to a service-level exception that `api/v1/jobs.py` returns as HTTP `503` with the standard request ID (indexed path only; the legacy path never raises it in dev/test).
 
 - [ ] **Step 5: Run public hybrid-search tests**
 
@@ -360,7 +417,9 @@ git commit -m "feat: use indexed PostgreSQL hybrid search"
 - [ ] **Step 1: Write a failing regression with the best job after row 200**
 
 ```python
-def test_best_match_after_row_200_can_rank_first(postgres_db):
+@pytest.mark.postgres
+def test_best_match_after_row_200_can_rank_first(postgres_db, monkeypatch):
+    monkeypatch.setattr(settings, "POSTGRES_INDEXED_RETRIEVAL_ENABLED", True)
     seed_low_fit_jobs(postgres_db, count=200)
     best = seed_exact_python_fastapi_match(postgres_db)
     result = CandidateMatcherService.match_resume(RESUME, db=postgres_db, limit=10)
@@ -369,7 +428,7 @@ def test_best_match_after_row_200_can_rank_first(postgres_db):
     assert result["total_evaluated"] <= 300
 ```
 
-Add tests for missing embedding = zero vector points, stable job-ID tie breaking, and distinct count semantics.
+Add tests for missing embedding = zero vector points, stable job-ID tie breaking, distinct count semantics, and (SQLite `client`, flag off) that the legacy `LIMIT 200` matcher path still runs unchanged.
 
 - [ ] **Step 2: Run matcher regressions and verify the row-201 failure**
 
@@ -391,9 +450,9 @@ def build_candidate_lexical_query(
 
 Deduplicate case-insensitively, exclude soft skills and personal prose, order canonical labels, and join hard skills + remaining tech stack + supplied seniority.
 
-- [ ] **Step 4: Retrieve and count candidates before exact scoring**
+- [ ] **Step 4: Retrieve and count candidates before exact scoring (flag-gated)**
 
-Issue a separate `COUNT(*)` under region/seniority filters for `total_eligible`. Retrieve 200 dense and 200 lexical hits, fuse/cap at 300, and load only those jobs. Remove `query.limit(200)`.
+Both paths issue a separate `COUNT(*)` under region/seniority filters for `total_eligible` (cheap, honest). When `settings.POSTGRES_INDEXED_RETRIEVAL_ENABLED` is true: retrieve 200 dense (with `hnsw.ef_search >= 200`) and 200 lexical hits via `PostgresRetrievalService`, fuse/cap at 300, load only those jobs. When false: keep the existing `select(Job)…limit(200)` selection unchanged. Do not delete the legacy selection branch in this task.
 
 - [ ] **Step 5: Make exact scoring truthful**
 
@@ -429,6 +488,8 @@ git commit -m "fix: retrieve deterministic matcher candidate pool"
 - Create: `scripts/backfill_search_documents.py`
 - Create: `scripts/backfill_job_embeddings.py`
 - Modify: `services/celery_app.py`
+- Modify: `docker-compose.yml` (worker runs beat)
+- Modify: `config.py` (`EMBEDDING_REEMBED_INTERVAL_SECONDS`)
 - Create: `tests/test_retrieval_backfills.py`
 - Test: `tests/test_retrieval_backfills.py`
 
@@ -466,9 +527,11 @@ Select primary keys greater than the last committed ID, ordered ascending, limit
 
 Select rows with null embedding or mismatched model, format texts with existing helpers, call `get_embeddings_batch()` with at most 100 texts, validate every dimension, and update vector + model + UTC timestamp in one transaction per batch. Retry transient provider errors at 2, 4, and 8 seconds; exit nonzero on authentication/configuration errors.
 
-- [ ] **Step 5: Add Celery wrappers without moving core logic**
+- [ ] **Step 5: Add Celery wrappers + a scheduled re-embed task**
 
 Expose `task_backfill_search_documents` and `task_backfill_job_embeddings` that call the script functions. Keep CLI/business logic importable and independently testable.
+
+Add a Celery Beat entry (`services/celery_app.py` `beat_schedule`, default every 15 min, interval from `EMBEDDING_REEMBED_INTERVAL_SECONDS`) that runs `task_backfill_job_embeddings` over a bounded batch so embeddings nulled by triggers/ingestion are regenerated without manual action (retrieval spec §6.2). Update `docker-compose.yml` so the `worker` service runs the beat scheduler (`celery -A services.celery_app worker -B --loglevel=info`, or add a dedicated `beat` service). Document the staleness window in the README ops section (Task 7 Step 4). Add a test that the beat schedule registers the task and that the task is a thin wrapper (no business logic duplicated).
 
 - [ ] **Step 6: Run backfill tests**
 
@@ -516,13 +579,13 @@ Create a small function in `services/postgres_retrieval_service.py` returning co
 
 - [ ] **Step 3: Add representative query-plan acceptance tests**
 
-Seed at least 10,000 jobs in a disposable PostgreSQL database, run `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, and assert plan nodes contain a GIN-assisted bitmap/index scan for selective lexical search and the HNSW index name for vector ordering. Record JSON plans under the test artifact directory, not in the repository.
+Seed at least 10,000 jobs in a disposable PostgreSQL database, run `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, and assert plan nodes contain a GIN-assisted bitmap/index scan for selective lexical search and the HNSW index name for vector ordering. Assert the dense branch actually returns its configured pool size (proving `SET LOCAL hnsw.ef_search` took effect, not the default 40). Record JSON plans under the test artifact directory, not in the repository.
 
 Measure 30 warmed retrieval runs and 30 warmed exact-scoring runs separately. Assert p95 database retrieval excluding embedding-provider latency is below 300 ms and p95 scoring of a 300-job candidate pool is below 500 ms. Mark these as PostgreSQL performance tests so unit-only jobs can skip them explicitly rather than silently treating SQLite timing as equivalent.
 
 - [ ] **Step 4: Update production config and README**
 
-Document `ACTIVE_EMBEDDING_MODEL`, `POSTGRES_INDEXED_RETRIEVAL_ENABLED`, backfill commands, activation thresholds, and the real indexed architecture. Remove claims that search is database-native unless the flag and indexes are enabled.
+Document `EMBEDDING_PROVIDER` / `ACTIVE_EMBEDDING_MODEL`, `POSTGRES_INDEXED_RETRIEVAL_ENABLED` (as a runtime switch and startup gate), `hnsw.ef_search` sizing, the CONCURRENTLY HNSW rebuild step, backfill commands, the scheduled re-embed task + its staleness window, and activation thresholds. Remove README/SPEC claims that search is database-native / RRF-over-`tsvector` unless the flag and indexes are enabled. Note that the hybrid search endpoint is currently API-only (no SPA consumer).
 
 - [ ] **Step 5: Run full verification**
 

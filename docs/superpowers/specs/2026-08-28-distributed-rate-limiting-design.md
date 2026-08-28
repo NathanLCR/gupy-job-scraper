@@ -79,11 +79,11 @@ When the immediate TCP peer is not in `TRUSTED_PROXY_CIDRS`, client identity is 
 
 When the immediate peer belongs to `TRUSTED_PROXY_CIDRS`, resolve identity in this order:
 
-1. a syntactically valid `CF-Connecting-IP`, when Cloudflare proxy mode is configured;
-2. the first syntactically valid address in `X-Forwarded-For`;
+1. a syntactically valid single-value `CF-Connecting-IP`, when `TRUST_CLOUDFLARE_CONNECTING_IP` is set. Cloudflare replaces this header on every request, so it is the trustworthy value on a Cloudflare deployment.
+2. otherwise, the **right-most** address in `X-Forwarded-For` that is *not* itself in `TRUSTED_PROXY_CIDRS` — i.e. walk the list from the end, skip entries that are trusted-proxy hops, and take the first remaining address. Trusted proxies (Cloudflare, ALBs, nginx) **append** the real client and forward whatever the client already sent, so the left-most entry is attacker-controlled and must never be used.
 3. the immediate peer address.
 
-Every value is parsed with the standard IP-address library and normalized before hashing. Invalid, empty, multi-value single-IP headers, zone identifiers, and non-IP strings are rejected rather than becoming distinct subjects.
+Every value is parsed with the standard IP-address library and normalized before hashing. Invalid, empty, multi-value single-IP headers, zone identifiers, and non-IP strings are rejected rather than becoming distinct subjects. If no non-proxy address remains after step 2, fall through to the peer address (step 3) and emit `client_identity_peer_fallback`.
 
 `TRUSTED_PROXY_CIDRS` defaults to an empty list. Production deployment must explicitly configure the actual load balancer or reverse-proxy networks. Trusting `0.0.0.0/0` or `::/0` is rejected by configuration validation.
 
@@ -95,19 +95,21 @@ Infrastructure should restrict the application origin to the selected proxy when
 
 The following defaults preserve current intent:
 
-| Scope | Method and route group | Limit | Window |
-|---|---|---:|---:|
-| `public_search` | `POST /api/v1/jobs/search/*` | 60 | 60 seconds |
-| `public_match` | `POST /api/v1/match` | 20 | 60 seconds |
-| `public_explain` | `POST /api/v1/match/explain` | 5 | 60 seconds |
-| `public_extract` | `POST /api/v1/extract` | 10 | 60 seconds |
-| `operator_login_failure` | failed `POST /api/v1/admin/login` | 5 | 900 seconds |
+| Scope | Method and route group | Auth | Limit | Window |
+|---|---|---|---:|---:|
+| `public_search` | `POST /api/v1/jobs/search/*` | public | 60 | 60 seconds |
+| `public_match` | `POST /api/v1/match` | public | 20 | 60 seconds |
+| `ai_explain` | `POST /api/v1/match/explain` | operator | 5 | 60 seconds |
+| `ai_extract` | `POST /api/v1/extract` | operator | 10 | 60 seconds |
+| `operator_login_failure` | failed `POST /api/v1/admin/login` | public | 5 | 900 seconds |
 
-Limits apply to route groups, not literal raw paths, so optional trailing slashes and path normalization cannot create extra buckets.
+`/api/v1/match/explain` and `/api/v1/extract` are already operator-authenticated in the current code (`api/v1/router.py` mounts the extract router under `require_admin_auth`; `match.py` guards `/explain`). They are still metered because they call paid LLM/embedding providers and a compromised or shared operator credential must not be able to exhaust that quota. These two scopes are the **explicit exception** to the "authenticated requests are exempt" rule below — they are keyed on client identity exactly like public scopes. The finding they resolve (program spec §1.4) is precisely that "public and operator" AI-cost limits were both process-local.
+
+Limits apply to route groups, not literal raw paths, so optional trailing slashes and path normalization cannot create extra buckets. Because these two scopes run in middleware ahead of route auth, an unauthenticated caller that would be `401`'d still consumes the identity's allowance for that scope; that is acceptable (it protects the same quota) and documented.
 
 Successful operator login clears the subject's failure bucket. A failed login is recorded only after constant-time credential comparison. Requests already blocked by the failure limit do not compare credentials.
 
-Authenticated operator mutations and health probes are not subject to the public limits. Separate operator-action throttles require evidence and a separate policy change.
+Apart from `ai_explain` and `ai_extract`, authenticated operator mutations and health probes are not subject to these limits. Separate operator-action throttles require evidence and a separate policy change.
 
 ## 6. Response contract
 
@@ -133,11 +135,16 @@ The response does not reveal the resolved IP, digest, proxy decision, Redis key,
 
 When Redis is unavailable or the atomic script fails:
 
-- expensive public search, match, explain, and extract requests fail closed with HTTP `503`;
+- requests in the `public_search`, `public_match`, `ai_explain`, and `ai_extract` scopes fail closed with HTTP `503`;
 - operator login fails closed with HTTP `503`;
-- already-authenticated operator requests continue to rely on normal authentication and authorization and are not blocked by this limiter failure;
-- ordinary unmetered reads and health liveness remain available;
-- readiness returns `503` once distributed rate limiting is enabled, because the configured protection cannot be enforced consistently.
+- already-authenticated operator requests (other than `ai_explain` / `ai_extract`) continue to rely on normal authentication and authorization and are not blocked by this limiter failure;
+- ordinary unmetered reads and health liveness remain available.
+
+**Readiness is not gated on Redis for traffic admission.** A brief Redis outage must not pull every instance out of rotation and take down unmetered reads too — that would convert a limiter degradation into a full outage. Instead:
+
+- `/health/ready` stays `200` during a Redis outage and reports `dependencies.redis` as `"degraded"` (database still `"connected"`);
+- the per-request fail-closed `503` above is what actually protects quota-consuming work;
+- observability alerts (§9) fire on sustained Redis errors so operators intervene.
 
 The `503` response states that request protection is temporarily unavailable and includes a request ID. It does not silently allow quota-consuming work.
 
@@ -147,14 +154,20 @@ Add and validate:
 
 ```dotenv
 RATE_LIMIT_ENABLED=true
+RATE_LIMIT_SHADOW=false
 RATE_LIMIT_KEY_SALT=replace-with-at-least-32-random-characters
 TRUSTED_PROXY_CIDRS=[]
 TRUST_CLOUDFLARE_CONNECTING_IP=false
 ```
 
-Existing per-scope limit settings remain supported. Production rejects:
+`RATE_LIMIT_SHADOW=true` computes and logs decisions without returning `429`/`503`; it is the intermediate rollout state (§11) and is not a valid long-term production setting.
 
-- enabled rate limiting without Redis;
+`REDIS_URL` becomes `Optional[str] = None` (runtime spec §4.3) so "enabled rate limiting without Redis" is a representable, rejected state rather than a silent default. Docker Compose and both env examples set it explicitly.
+
+Existing per-scope limit settings remain supported. Existing setting names `RATE_LIMIT_SEARCH_RPM`, `RATE_LIMIT_MATCH_RPM`, `RATE_LIMIT_EXPLAIN_RPM`, `RATE_LIMIT_EXTRACT_RPM` continue to feed scopes `public_search`, `public_match`, `ai_explain`, `ai_extract` respectively. Production rejects:
+
+- enabled rate limiting with `REDIS_URL` unset;
+- enabled rate limiting where Redis is set but unreachable at startup (bounded ping);
 - a missing, placeholder, or short HMAC salt;
 - invalid CIDR entries;
 - universal trusted-proxy networks;
@@ -205,21 +218,23 @@ These tests run against a real Redis service in integration CI. Unit tests may u
 
 ### 10.3 Failure tests
 
-- Redis outage returns `503` on every protected expensive endpoint and login;
+- Redis outage returns `503` on every `public_*` / `ai_*` scope and on login;
 - ordinary versioned GET endpoints remain available;
-- readiness becomes `503` while liveness remains `200`;
+- readiness stays `200` with `dependencies.redis == "degraded"` while liveness remains `200` (readiness is not gated on Redis for admission — §7);
 - no old in-memory store receives writes after the feature is enabled.
 
 ### 10.4 Security regression
 
-From a direct, untrusted connection, send requests with a different `X-Forwarded-For` and `CF-Connecting-IP` value each time. The configured limit must still trigger based on the peer address.
+- From a direct, untrusted connection, send requests with a different `X-Forwarded-For` and `CF-Connecting-IP` value each time. The configured limit must still trigger based on the peer address.
+- From a **trusted** proxy peer, send `X-Forwarded-For: <attacker-chosen>, <real-client>` (proxy-appended form) on each request with a rotating attacker-chosen left-most value. The subject must resolve to `<real-client>` (right-most non-proxy entry) so the limit still triggers.
+- With `TRUST_CLOUDFLARE_CONNECTING_IP=true`, a trusted peer supplying only `X-Forwarded-For` (no `CF-Connecting-IP`) still resolves to the right-most non-proxy entry, not the left-most.
 
 ## 11. Rollout and rollback
 
-1. Provision and monitor Redis in the target environment.
-2. Configure trusted proxy CIDRs and verify them from deployment network documentation.
-3. Deploy the shared limiter with enforcement disabled and compare shadow decisions to current traffic.
-4. Enable login enforcement, then expensive public endpoint enforcement.
-5. Delete `_RATE_LIMIT_STORE`, `_FAILED_LOGINS`, and their helper functions in the same release that becomes authoritative.
+1. Provision and monitor Redis in the target environment; set `REDIS_URL` explicitly.
+2. Configure `TRUSTED_PROXY_CIDRS` (for a Cloudflare-fronted deployment, the Cloudflare edge ranges) and `TRUST_CLOUDFLARE_CONNECTING_IP`, verified against deployment network documentation.
+3. Deploy the shared limiter in shadow mode (`RATE_LIMIT_SHADOW=true`): resolve identity and compute decisions, log them via the §9 events, but enforce nothing. Compare shadow decisions to current traffic.
+4. Turn off shadow mode so enforcement takes effect — login scope first, then the `public_*` / `ai_*` scopes. `RATE_LIMIT_ENABLED` remains the hard on/off; `RATE_LIMIT_SHADOW` is the observe-only intermediate state.
+5. Delete `_RATE_LIMIT_STORE`, `_FAILED_LOGINS`, and their helper functions in the same release that becomes authoritative. The operator-security test suite imports `_FAILED_LOGINS` at module scope and clears it in fixtures — those imports/fixtures and the old `429` message assertions are rewritten in this step.
 
-Rollback disables the new middleware only by reverting the application release. Production configuration must not leave expensive endpoints enabled with no limiter. Redis keys expire naturally and require no destructive cleanup.
+Rollback is `RATE_LIMIT_ENABLED=false` (takes effect without redeploy) and/or reverting the release. Production configuration must not leave `public_*` / `ai_*` scopes reachable with enforcement permanently disabled. Redis keys expire naturally and require no destructive cleanup.
