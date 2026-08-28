@@ -3,8 +3,8 @@ from config import settings
 
 celery_app = Celery(
     "skillpulse_ai",
-    broker=settings.CELERY_BROKER_URL or settings.REDIS_URL,
-    backend=settings.CELERY_RESULT_BACKEND or settings.REDIS_URL,
+    broker=settings.CELERY_BROKER_URL or settings.REDIS_URL or "redis://localhost:6379/0",
+    backend=settings.CELERY_RESULT_BACKEND or settings.REDIS_URL or "redis://localhost:6379/0",
 )
 
 celery_app.conf.update(
