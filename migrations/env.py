@@ -16,7 +16,7 @@ config = context.config
 config.set_main_option("sqlalchemy.url", get_database_url().replace("%", "%%"))
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
@@ -35,6 +35,16 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    provided_connection = config.attributes.get("connection", None)
+    if provided_connection is not None:
+        context.configure(connection=provided_connection, target_metadata=target_metadata)
+        if provided_connection.in_transaction():
+            context.run_migrations()
+        else:
+            with context.begin_transaction():
+                context.run_migrations()
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
