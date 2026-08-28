@@ -1,5 +1,4 @@
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -12,12 +11,25 @@ class PaginationMeta(BaseModel):
     has_prev: bool = False
 
 
+class LivenessResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    service: str = "SkillPulse"
+    version: str = "1.0.0"
+
+
+class ReadinessResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    status: Literal["ready", "not_ready"]
+    database: Literal["connected", "unavailable"]
+    schema_state: Literal["current", "outdated", "unknown"] = Field(serialization_alias="schema")
+    version: str = "1.0.0"
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "1.0.0"
-    environment: str = "development"
+    environment: Optional[str] = "development"
     database: str = "connected"
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
 class StatsResponse(BaseModel):
