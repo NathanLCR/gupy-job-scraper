@@ -11,6 +11,9 @@ if root_dir not in sys.path:
 test_db_path = os.path.join(root_dir, "test_jobs.db")
 os.environ["DATABASE_URL"] = f"sqlite:///{test_db_path}"
 
+from config import settings
+settings.RATE_LIMIT_ENABLED = False
+
 import database
 database._engine = None
 database._session_factory = None

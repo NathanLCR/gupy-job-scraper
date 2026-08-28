@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
+import logging
 import os
+import time
 import uuid
 from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
@@ -140,60 +142,115 @@ app.add_middleware(
     ),
 )
 
-# ─── Public API Rate Limiting Middleware ─────────────────────────────────────
-import time
-from collections import defaultdict
+# ─── Public & Quota Rate Limiting Middleware (Distributed Redis Limiter) ──────
+from services.rate_limit_policy import resolve_rate_limit_policy
+from services.client_identity_service import resolve_client_identity, digest_client_identity, short_digest
+from services.rate_limit_service import get_rate_limiter, RateLimitUnavailableError
 
-_RATE_LIMIT_STORE: dict[str, list[float]] = defaultdict(list)
+logger = logging.getLogger("skillpulse.rate_limit")
 
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     """
-    Protects public cloud endpoints and AI services against quota exhaustion.
-    Enforces sliding-window rate limits per client IP on POST endpoints.
+    Protects public endpoints and quota-bound AI services across all workers
+    using distributed Redis sliding windows and spoof-resistant client identity.
     """
     if not settings.RATE_LIMIT_ENABLED:
         return await call_next(request)
 
-    path = request.url.path
-    limit = None
+    policy = resolve_rate_limit_policy(request.method, request.url.path)
+    if policy is None:
+        return await call_next(request)
 
-    if path.startswith(f"{settings.API_V1_PREFIX}/match/explain"):
-        limit = settings.RATE_LIMIT_EXPLAIN_RPM
-    elif path.startswith(f"{settings.API_V1_PREFIX}/match"):
-        limit = settings.RATE_LIMIT_MATCH_RPM
-    elif path.startswith(f"{settings.API_V1_PREFIX}/extract"):
-        limit = settings.RATE_LIMIT_EXTRACT_RPM
-    elif path.startswith(f"{settings.API_V1_PREFIX}/jobs/search"):
-        limit = settings.RATE_LIMIT_SEARCH_RPM
+    trusted_networks = settings.get_trusted_proxy_networks()
+    identity = resolve_client_identity(
+        request,
+        trusted_networks=trusted_networks,
+        trust_cloudflare=settings.TRUST_CLOUDFLARE_CONNECTING_IP,
+    )
+    salt = settings.RATE_LIMIT_KEY_SALT or "default-development-salt-at-least-32-chars-long"
+    subject = digest_client_identity(identity.normalized_ip, salt)
 
-    if limit is not None and request.method == "POST":
-        client_ip = (
-            request.headers.get("cf-connecting-ip")
-            or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or (request.client.host if request.client else "127.0.0.1")
-        )
-        key = f"{client_ip}:{path}"
-        now = time.time()
-        window = 60.0
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("x-request-id") or uuid.uuid4().hex
 
-        # Filter out timestamps older than window
-        timestamps = [t for t in _RATE_LIMIT_STORE[key] if now - t < window]
-        if len(timestamps) >= limit:
-            retry_after = max(1, int(window - (now - timestamps[0])) + 1)
-            return JSONResponse(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                content={
-                    "detail": "Rate limit exceeded on public endpoint. Please try again shortly.",
-                    "retry_after_seconds": retry_after,
+    try:
+        limiter = get_rate_limiter()
+        start_time = time.perf_counter()
+        decision = limiter.check(policy.scope, subject, policy.limit, policy.window_seconds)
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+    except RateLimitUnavailableError:
+        if settings.RATE_LIMIT_SHADOW:
+            logger.warning(
+                "Rate limit store unavailable (shadow mode, proceeding)",
+                extra={
+                    "event": "rate_limit_store_unavailable",
+                    "scope": policy.scope,
+                    "shadow": True,
+                    "request_id": request_id,
                 },
-                headers={"Retry-After": str(retry_after)},
             )
-        timestamps.append(now)
-        _RATE_LIMIT_STORE[key] = timestamps
+            return await call_next(request)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "detail": "Rate limit service temporarily unavailable. Please try again shortly.",
+                "request_id": request_id,
+            },
+            headers={
+                "Cache-Control": "no-store",
+                "X-Request-ID": request_id,
+            },
+        )
 
-    return await call_next(request)
+    if decision.allowed:
+        logger.info(
+            "Rate limit allowed",
+            extra={
+                "event": "rate_limit_allowed",
+                "scope": policy.scope,
+                "subject_prefix": short_digest(subject),
+                "duration_ms": duration_ms,
+                "shadow": settings.RATE_LIMIT_SHADOW,
+                "request_id": request_id,
+            },
+        )
+        response = await call_next(request)
+        response.headers["RateLimit-Limit"] = str(decision.limit)
+        response.headers["RateLimit-Remaining"] = str(decision.remaining)
+        response.headers["RateLimit-Reset"] = str(decision.reset_after_seconds)
+        return response
+    else:
+        logger.warning(
+            "Rate limit rejected",
+            extra={
+                "event": "rate_limit_rejected",
+                "scope": policy.scope,
+                "subject_prefix": short_digest(subject),
+                "duration_ms": duration_ms,
+                "shadow": settings.RATE_LIMIT_SHADOW,
+                "request_id": request_id,
+            },
+        )
+        if settings.RATE_LIMIT_SHADOW:
+            return await call_next(request)
+
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "detail": "Rate limit exceeded. Please try again later.",
+                "retry_after_seconds": decision.retry_after_seconds,
+                "request_id": request_id,
+            },
+            headers={
+                "Retry-After": str(decision.retry_after_seconds),
+                "Cache-Control": "no-store",
+                "RateLimit-Limit": str(decision.limit),
+                "RateLimit-Remaining": "0",
+                "RateLimit-Reset": str(decision.reset_after_seconds),
+                "X-Request-ID": request_id,
+            },
+        )
 
 
 @app.middleware("http")

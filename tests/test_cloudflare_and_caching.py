@@ -236,11 +236,19 @@ class TestCandidateExplanationAndParsing:
 class TestPublicRateLimiting:
 
     def test_rate_limit_exceeded_returns_429(self):
+        from services.rate_limit_service import RateLimitDecision
+        mock_limiter = MagicMock()
+        mock_limiter.check.side_effect = [
+            RateLimitDecision(allowed=True, limit=2, remaining=1, retry_after_seconds=0, reset_after_seconds=60),
+            RateLimitDecision(allowed=True, limit=2, remaining=0, retry_after_seconds=0, reset_after_seconds=60),
+            RateLimitDecision(allowed=False, limit=2, remaining=0, retry_after_seconds=42, reset_after_seconds=60),
+        ]
         with patch("config.settings.RATE_LIMIT_ENABLED", True), \
-             patch("config.settings.RATE_LIMIT_EXTRACT_RPM", 2):
+             patch("config.settings.RATE_LIMIT_EXTRACT_RPM", 2), \
+             patch("app.get_rate_limiter", return_value=mock_limiter):
             payload = {"text": "Simple test payload for rate limiter"}
-            # Request 1: OK
             headers = operator_headers()
+            # Request 1: OK
             r1 = client.post("/api/v1/extract", json=payload, headers=headers)
             assert r1.status_code in (200, 429)
 
