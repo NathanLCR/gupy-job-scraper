@@ -1,6 +1,6 @@
 """Upgrade schema with pgvector, HNSW indexing, multi-region fields, canonical taxonomies, and candidate profiles.
 
-Revision ID: 0010_upgrade_pgvector_taxonomies_multiregion
+Revision ID: 0010_pgvector_taxonomies
 Revises: 0009_add_last_scrape_page
 Create Date: 2026-08-20 00:00:00.000000
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "0010_upgrade_pgvector_taxonomies_multiregion"
+revision = "0010_pgvector_taxonomies"
 down_revision = "0009_add_last_scrape_page"
 branch_labels = None
 depends_on = None

@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "skillpulse-python-d1-read-spike-20260821",
+  "main": "src/main.py",
+  "compatibility_date": "2026-08-21",
+  "compatibility_flags": ["python_workers"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "skillpulse-d1-read-spike",
+      "database_id": "72bb6846-b92a-47ca-9c69-b62539b2b232"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

@@ -10,6 +10,7 @@ ENV/
 *.sqlite3
 *.db
 jobs.db
+extract.log
 
 *.csv
 Gupy_ex.csv
@@ -33,3 +34,10 @@ instance/
 .webassets-cache
 .pytest_cache/
 .tox/
+
+# Cloudflare Python Worker generated build/runtime artifacts
+spikes/**/.wrangler/
+spikes/**/python_modules/
+
+# Project Specs & Internal Docs (Ignored as requested)
+docs/

@@ -22,6 +22,11 @@ def get_jobs(
     *,
     search: str | None = None,
     location: str | None = None,
+    source: str | None = None,
+    region: str | None = None,
+    country_code: str | None = None,
+    workplace_type: str | None = None,
+    seniority: str | None = None,
     sort: str = "id",
     order: str = "desc",
     page: int | None = None,
@@ -57,6 +62,21 @@ def get_jobs(
                 )
             )
 
+        if source:
+            query = query.where(Job.source.ilike(source.strip()))
+
+        if region:
+            query = query.where(Job.region.ilike(region.strip()))
+
+        if country_code:
+            query = query.where(Job.country_code.ilike(country_code.strip()))
+
+        if workplace_type:
+            query = query.where(Job.workplace_type.ilike(workplace_type.strip()))
+
+        if seniority:
+            query = query.where(Job.seniority.ilike(f"%{seniority.strip()}%"))
+
         sort_map = {
             "id": Job.id,
             "title": Job.job_title,
@@ -88,11 +108,20 @@ def get_jobs(
 
 def get_job(id):
     db = SessionLocal()
-    query = Select(Job).where(Job.id==id)
+    query = Select(Job).where(Job.id == id)
     try:
         job = db.scalars(query).first()
         if job is None:
             raise ValueError(f"Job with id {id} not found")
+        # Touch lazy relationships within session context before expunging
+        _ = list(job.hard_skills or [])
+        _ = list(job.soft_skills or [])
+        _ = list(job.nice_to_have_skills or [])
+        _ = job.company
+        _ = job.contract_type
+        _ = job.state
+        _ = job.city
+        db.expunge(job)
         return job
     except Exception as e:
         log_error(

@@ -7,7 +7,7 @@ with an intelligent confidence router (SPEC §3.2).
 import logging
 import re
 from datetime import UTC, datetime
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any, Dict, List, Optional, Union
 
 from database import SessionLocal
@@ -28,9 +28,12 @@ from features_extractors.regex_extractor import (
     extract as regex_extract,
     normalise_skill_label,
 )
+from services.embedding_service import embed_job_text
 from services.error_service import log_error
 
 logger = logging.getLogger(__name__)
+
+_extractor_lock = Lock()
 
 
 def get_or_create(session, model, **kwargs):
@@ -60,7 +63,9 @@ extractor_statuses = {
 
 
 def get_extractor_status(extractor_type="regex"):
-    return extractor_statuses.get(extractor_type, _new_extractor_status())
+    with _extractor_lock:
+        status_dict = extractor_statuses.get(extractor_type, _new_extractor_status())
+        return dict(status_dict)
 
 
 def parse_salary(salary_data: Any) -> Optional[int]:
@@ -224,8 +229,8 @@ def extract_cascade(
         t1_result["confidence"] = confidence
         return t1_result
 
-    # 3. Low confidence or ambiguous: Trigger Tier 3 (Ollama LLM)
-    logger.info(f"Confidence {confidence} < {tier_threshold}. Routing to Tier 3 (Ollama LLM)...")
+    # 3. Low confidence or ambiguous: Trigger Tier 3 (Cloud AI Router)
+    logger.info(f"Confidence {confidence} < {tier_threshold}. Routing to Tier 3 (Cloud AI Router)...")
     t3_result = llm_extract(cleaned_text)
 
     # Merge Tier 3 enriched intelligence
@@ -239,6 +244,8 @@ def extract_cascade(
     salary = t3_result.get("salary") or t1_result.get("salary")
     contract = t3_result.get("contract_type") or t1_result.get("contract_type") or ["CLT"]
 
+    tier_used_tag = t3_result.get("tier_used") or "tier3_cloud_llm"
+
     return {
         "job_title": t3_result.get("job_title") or t1_result.get("job_title"),
         "seniority": seniority,
@@ -249,24 +256,27 @@ def extract_cascade(
         "soft_skills": sorted(list(final_soft)),
         "nice_to_have": normalize_skill_names(list(final_nice)),
         "tech_stack": sorted(list(final_stacks)),
-        "tier_used": "tier3_ollama_llm",
+        "tier_used": tier_used_tag,
         "confidence": max(confidence, t3_result.get("confidence_score", 0.85)),
     }
 
 
 # ==============================================================================
-# BATCH WORKER INTEGRATION
+# BATCH WORKER INTEGRATION (Chunked Slicer & Rate-Limit Backoff)
 # ==============================================================================
 
 def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
-    status = extractor_statuses[extractor_type]
-    if status["running"]:
-        return
+    import time
+    from config import settings
 
-    status["running"] = True
-    status["started_at"] = datetime.now(UTC).isoformat()
-    status["finished_at"] = None
-    status["error"] = None
+    with _extractor_lock:
+        status = extractor_statuses[extractor_type]
+        if status["running"]:
+            return
+        status["running"] = True
+        status["started_at"] = datetime.now(UTC).isoformat()
+        status["finished_at"] = None
+        status["error"] = None
 
     db = SessionLocal()
     try:
@@ -279,87 +289,118 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
             query = query.limit(limit)
 
         jobs_to_extract = query.all()
+        total_items = len(jobs_to_extract)
+        batch_size = getattr(settings, "EXTRACTION_BATCH_SIZE", 15)
+        delay = getattr(settings, "EXTRACTION_RATE_LIMIT_DELAY", 2.0)
 
-        for job in jobs_to_extract:
-            try:
-                features = extractor_fn(job.description or "")
-                if not features:
-                    continue
+        # Process in chunked batches
+        for i in range(0, total_items, batch_size):
+            batch = jobs_to_extract[i : i + batch_size]
+            for job in batch:
+                try:
+                    features = extractor_fn(job.description or "")
+                    if not features:
+                        continue
 
-                company = db.query(Company).filter_by(id=job.company_id).first()
+                    c_name = (job.career_page_name or (f"Empresa {job.company_id}" if job.company_id else "Empresa Confidencial"))[:255]
+                    company = None
+                    if job.company_id:
+                        company = db.query(Company).filter_by(id=job.company_id).first()
+                    if not company:
+                        company = db.query(Company).filter_by(name=c_name).first()
+                    if not company:
+                        company = Company(id=job.company_id if job.company_id else None, name=c_name)
+                        db.add(company)
+                        db.flush()
 
-                if not company:
-                    c_name = (job.career_page_name or f"Empresa {job.company_id}")[:255]
-                    if db.query(Company).filter_by(name=c_name).first():
-                        c_name = f"{c_name} ({job.company_id})"[:255]
+                    state_name = job.state or job.country or job.region or "Global"
+                    state_obj = get_or_create(db, State, name=state_name[:100])
+                    city_obj = None
 
-                    company = Company(id=job.company_id, name=c_name)
-                    db.add(company)
-                    db.flush()
-
-                state_obj = None
-                city_obj = None
-                if job.state:
-                    state_obj = get_or_create(db, State, name=job.state[:100])
                     if job.city:
-                        city_obj = get_or_create(db, City, name=job.city[:150], state_id=state_obj.id)
+                        city_obj = get_or_create(db, City, name=job.city[:150], state_id=state_obj.id if state_obj else None)
 
-                c_types = features.get("contract_type", [])
-                raw_c_type = c_types[0] if isinstance(c_types, list) and c_types else ("CLT" if not c_types else str(c_types))
-                normalized_c_type = normalize_contract_type(raw_c_type)
-                contract_obj = get_or_create(db, ContractType, name=normalized_c_type)
+                    c_types = features.get("contract_type", [])
+                    raw_c_type = c_types[0] if isinstance(c_types, list) and c_types else ("CLT" if not c_types else str(c_types))
+                    normalized_c_type = normalize_contract_type(raw_c_type)
+                    contract_obj = get_or_create(db, ContractType, name=normalized_c_type)
 
-                hard_skills_list = []
-                for s in normalize_skill_names(features.get("hard_skills") or []):
-                    hard_skills_list.append(get_or_create(db, HardSkill, name=s[:120]))
+                    hard_skills_list = []
+                    for s in normalize_skill_names(features.get("hard_skills") or []):
+                        hard_skills_list.append(get_or_create(db, HardSkill, name=s[:120]))
 
-                soft_skills_list = []
-                for s in normalize_skill_names(features.get("soft_skills") or []):
-                    soft_skills_list.append(get_or_create(db, SoftSkill, name=s[:120]))
+                    soft_skills_list = []
+                    for s in normalize_skill_names(features.get("soft_skills") or []):
+                        soft_skills_list.append(get_or_create(db, SoftSkill, name=s[:120]))
 
-                nice_skills_list = []
-                for s in normalize_skill_names(features.get("nice_to_have") or []):
-                    nice_skills_list.append(get_or_create(db, NiceToHaveSkill, name=s[:120]))
+                    nice_skills_list = []
+                    for s in normalize_skill_names(features.get("nice_to_have") or []):
+                        nice_skills_list.append(get_or_create(db, NiceToHaveSkill, name=s[:120]))
 
-                salary_val = parse_salary(features.get("salary"))
+                    salary_val = parse_salary(features.get("salary"))
+                    tech_stack_items = normalize_skill_names(features.get("tech_stack") or features.get("hard_skills") or [])
+                    resolved_title = (features.get("job_title") or job.name or "Vaga sem título")[:255]
 
-                new_job = Job(
-                    id=job.id,
-                    job_title=((features.get("job_title") or job.name or "Vaga sem título")[:255]),
-                    extractor_type=features.get("tier_used") or extractor_type,
-                    salary=salary_val,
-                    seniority=features.get("seniority"),
-                    years_experience=features.get("years_experience"),
-                    tech_stack=normalize_skill_names(features.get("tech_stack") or features.get("hard_skills") or []),
-                    company_id=company.id,
-                    contract_type_id=contract_obj.id if contract_obj else None,
-                    state_id=state_obj.id if state_obj else None,
-                    city_id=city_obj.id if city_obj else None,
-                    hard_skills=hard_skills_list,
-                    soft_skills=soft_skills_list,
-                    nice_to_have_skills=nice_skills_list,
-                )
+                    # Generate 384-dimensional dense vector embedding
+                    embedding_vec = embed_job_text(
+                        job_title=resolved_title,
+                        tech_stack=tech_stack_items,
+                        hard_skills=[s.name for s in hard_skills_list],
+                        description=job.description,
+                        seniority=features.get("seniority"),
+                    )
 
-                db.add(new_job)
-                db.commit()
+                    new_job = Job(
+                        id=job.id,
+                        source=getattr(job, "source", "gupy") or "gupy",
+                        job_title=resolved_title,
+                        extractor_type=features.get("tier_used") or extractor_type,
+                        salary=salary_val,
+                        seniority=features.get("seniority"),
+                        years_experience=features.get("years_experience"),
+                        tech_stack=tech_stack_items,
+                        description=job.description,
+                        region=getattr(job, "region", "Latin America") or "Latin America",
+                        country_code=getattr(job, "country_code", "BR") or "BR",
+                        currency=getattr(job, "currency", "BRL") or "BRL",
+                        workplace_type=getattr(job, "workplace_type", None) or ("REMOTE" if job.is_remote_work else "ONSITE"),
+                        fingerprint=getattr(job, "fingerprint", None),
+                        embedding=embedding_vec,
+                        company_id=company.id,
+                        contract_type_id=contract_obj.id if contract_obj else None,
+                        state_id=state_obj.id if state_obj else None,
+                        city_id=city_obj.id if city_obj else None,
+                        hard_skills=hard_skills_list,
+                        soft_skills=soft_skills_list,
+                        nice_to_have_skills=nice_skills_list,
+                    )
 
-            except Exception as exc:
-                db.rollback()
-                log_error(
-                    f"Failed to process job {job.id}: {exc}",
-                    term=None,
-                    page=None,
-                    request_limit=None,
-                    payload=job.description,
-                    source=error_source,
-                )
-                logger.error(f"Failed to process job {job.id}: {exc}")
+                    db.add(new_job)
+                    db.commit()
+
+                    # Throttle only when external Cloud LLM (Tier 3) is actually invoked
+                    if extractor_type == "llm" or (features and "tier3" in str(features.get("tier_used", ""))):
+                        time.sleep(delay)
+
+                except Exception as exc:
+                    db.rollback()
+                    log_error(
+                        f"Failed to process job {job.id}: {exc}",
+                        term=None,
+                        page=None,
+                        request_limit=None,
+                        payload=job.description,
+                        source=error_source,
+                    )
+                    logger.error(f"Failed to process job {job.id}: {exc}")
 
     except Exception as general_exc:
-        status["error"] = str(general_exc)
+        with _extractor_lock:
+            extractor_statuses[extractor_type]["error"] = str(general_exc)
     finally:
-        status["running"] = False
-        status["finished_at"] = datetime.now(UTC).isoformat()
+        with _extractor_lock:
+            extractor_statuses[extractor_type]["running"] = False
+            extractor_statuses[extractor_type]["finished_at"] = datetime.now(UTC).isoformat()
         db.close()
 
 

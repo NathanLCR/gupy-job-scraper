@@ -1,0 +1,40 @@
+# ==============================================================================
+# SkillPulse — Cloudflare Workers Deployment Configuration
+# Edge Serving Architecture: Python Worker (FastAPI) + Hyperdrive + Workers AI
+# ==============================================================================
+
+name = "skillpulse-api"
+main = "app.py"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["python_workers"]
+
+# Cloudflare Workers AI Binding (@cf/baai/bge-small-en-v1.5 384-d embeddings)
+[ai]
+binding = "AI"
+
+# Cloudflare Hyperdrive Binding (PostgreSQL / Neon Connection Pooling)
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "YOUR_HYPERDRIVE_CONFIG_ID"
+# Local fallback connection string for testing
+localConnectionString = "postgresql://postgres:postgres@localhost:5432/postgres"
+
+# Environment Variables (Public non-sensitive parameters)
+[vars]
+ENVIRONMENT = "production"
+EMBEDDING_MODEL = "@cf/baai/bge-small-en-v1.5"
+GROQ_MODEL = "llama-3.3-70b-versatile"
+OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+RATE_LIMIT_ENABLED = "true"
+RATE_LIMIT_SEARCH_RPM = "60"
+RATE_LIMIT_MATCH_RPM = "20"
+RATE_LIMIT_EXPLAIN_RPM = "5"
+RATE_LIMIT_EXTRACT_RPM = "10"
+CORS_ORIGINS = '["https://skillpulse.pages.dev"]'
+
+# Secrets (Deploy using: npx wrangler secret put <NAME>)
+# - GROQ_API_KEY
+# - OPENROUTER_API_KEY
+# - DATABASE_URL (or Hyperdrive connection string)
+# - CF_ACCOUNT_ID
+# - CF_API_TOKEN

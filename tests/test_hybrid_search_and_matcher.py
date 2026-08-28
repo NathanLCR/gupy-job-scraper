@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import app
+from config import settings
 from database import SessionLocal
 from entities import City, Company, ContractType, HardSkill, Job, NiceToHaveSkill, SoftSkill, State
 from services.embedding_service import (
@@ -452,6 +453,8 @@ def test_api_match_endpoint_with_gap_analysis():
 def test_api_match_endpoint_profile_id_flow():
     """Verify POST /api/v1/match works using existing profile_id."""
     # 1. Create a profile
+    settings.ADMIN_API_KEY = "test-operator-secret-hybrid-tests-32"
+    headers = {"Authorization": "Bearer test-operator-secret-hybrid-tests-32"}
     create_res = client.post(
         "/api/v1/match/profile",
         json={
@@ -460,6 +463,7 @@ def test_api_match_endpoint_profile_id_flow():
             "raw_resume_text": "Fullstack Engineer with Python, React, Docker, and SQL experience.",
             "target_region": "Latin America",
         },
+        headers=headers,
     )
     assert create_res.status_code == 201
     profile_id = create_res.json()["id"]
@@ -487,7 +491,9 @@ def test_api_match_validation_errors():
 
 def test_api_get_candidate_profile_not_found():
     """Verify GET /api/v1/match/profile/{id} returns 404 for non-existent profile."""
-    res_404 = client.get("/api/v1/match/profile/999999")
+    settings.ADMIN_API_KEY = "test-operator-secret-hybrid-tests-32"
+    headers = {"Authorization": "Bearer test-operator-secret-hybrid-tests-32"}
+    res_404 = client.get("/api/v1/match/profile/999999", headers=headers)
     assert res_404.status_code == 404
 
 
@@ -519,6 +525,33 @@ def test_hybrid_search_faceted_filters_advanced():
         # Search with location filter
         res_loc = hybrid_search_jobs(query="Developer", location="São Paulo", db=db)
         assert len(res_loc) >= 1
+    finally:
+        db.close()
+
+
+def test_matcher_explainability_and_summary():
+    """Verify explainable score points (out of 50/20/30), match_reason, and candidate_summary."""
+    db = SessionLocal()
+    try:
+        resume = "Senior Python Engineer with 6 years experience in FastAPI, Docker, Kubernetes, and PostgreSQL."
+        result = CandidateMatcherService.match_resume(resume_text=resume, db=db, limit=5)
+        assert "candidate_summary" in result
+        summary = result["candidate_summary"]
+        assert "overall_fit_score" in summary
+        assert "strongest_areas" in summary
+        assert len(summary["strongest_areas"]) >= 3
+        assert "largest_gaps" in summary
+
+        for match in result["matches"]:
+            assert "hard_points" in match
+            assert "soft_points" in match
+            assert "vector_points" in match
+            assert "total_points" in match
+            assert "match_reason" in match
+            assert isinstance(match["match_reason"], str)
+            assert len(match["match_reason"]) > 10
+            # Total points should match fit score
+            assert math.isclose(match["total_points"], match["fit_score"], abs_tol=0.2)
     finally:
         db.close()
 

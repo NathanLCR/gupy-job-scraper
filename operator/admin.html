@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SkillPulse — Operator Admin Console</title>
+    <link rel="icon" type="image/png" href="/frontend/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/operator/assets/admin.css">
+</head>
+<body>
+
+    <!-- Verification gate remains visible until the server confirms the session. -->
+    <div id="admin-auth-overlay" class="auth-overlay">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h2 class="auth-title"><span>⌁</span> Verifying operator session</h2>
+                <p class="auth-sub">The workspace stays locked until the server confirms an active session.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Operator Console Workspace (Locked by default with hidden and aria-hidden="true") -->
+    <div class="admin-layout" id="admin-app-layout" hidden aria-hidden="true">
+        <!-- Admin Sidebar (Railway Organization) -->
+        <aside class="admin-sidebar">
+            <div class="admin-brand">
+                <div class="admin-brand-title">
+                    <span>⌁</span> SkillPulse / Admin
+                </div>
+                <span class="admin-badge">Operator</span>
+            </div>
+
+            <div class="admin-nav-section">
+                <div class="admin-nav-item active" data-target="admin-overview-view">
+                    <i class='bx bx-grid-alt'></i> Overview
+                </div>
+
+                <div class="admin-nav-label">Data</div>
+                <div class="admin-nav-item" data-target="admin-terms-view">
+                    <i class='bx bx-search-alt'></i> Sources & Feeds
+                </div>
+                <div class="admin-nav-item" data-target="admin-raw-jobs-view">
+                    <i class='bx bx-briefcase-alt-2'></i> Job Postings (Raw)
+                </div>
+                <div class="admin-nav-item" data-target="admin-processed-jobs-view">
+                    <i class='bx bx-check-shield'></i> Database (pgvector)
+                </div>
+
+                <div class="admin-nav-label">Pipeline</div>
+                <div class="admin-nav-item" data-target="admin-ingest-view">
+                    <i class='bx bx-refresh'></i> Ingestion
+                </div>
+                <div class="admin-nav-item" data-target="admin-extract-view">
+                    <i class='bx bx-layer'></i> Extraction
+                </div>
+
+                <div class="admin-nav-label">System</div>
+                <div class="admin-nav-item" data-target="admin-health-view">
+                    <i class='bx bx-pulse'></i> Health & Maintenance
+                </div>
+                <div class="admin-nav-item" data-target="admin-logs-view">
+                    <i class='bx bx-bug'></i> Logs & Audit
+                </div>
+                <a href="/docs" target="_blank" class="admin-nav-item" style="text-decoration: none;">
+                    <i class='bx bx-code-alt'></i> API Docs ↗
+                </a>
+            </div>
+
+            <div class="admin-sidebar-footer">
+                <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">PostgreSQL Ready</span>
+                <button class="btn-admin" onclick="handleAdminLogout()" title="Logout" style="padding: 3px 8px; font-size: 11px;">
+                    <i class='bx bx-exit'></i> Logout
+                </button>
+            </div>
+        </aside>
+
+        <!-- Admin Main Content Area -->
+        <main class="admin-main">
+            <header class="admin-top-bar">
+                <div class="admin-breadcrumb" id="admin-view-title">Overview & Pipeline Operations</div>
+                <div class="admin-top-actions">
+                    <button class="btn-admin" id="btn-trigger-scrape">
+                        <i class='bx bx-refresh'></i> Run Ingestion
+                    </button>
+                    <button class="btn-admin" id="btn-trigger-extract">
+                        <i class='bx bx-layer'></i> Run Batch Extraction
+                    </button>
+                </div>
+            </header>
+
+            <div class="admin-views-scroll">
+
+                <!-- 1. OVERVIEW VIEW -->
+                <section id="admin-overview-view" class="admin-view active">
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">System Health & Background Workers</h3>
+                            <button class="btn-admin" onclick="fetchAdminOverview()"><i class='bx bx-refresh'></i> Refresh</button>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px;">
+                            <div style="background-color: var(--surface-raised); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                                <div style="font-size: 11px; color: var(--text-muted);">Ingestion Worker</div>
+                                <div id="status-ingestion" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">Idle</div>
+                            </div>
+                            <div style="background-color: var(--surface-raised); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                                <div style="font-size: 11px; color: var(--text-muted);">Cascade Extractor</div>
+                                <div id="status-extractor" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">Ready</div>
+                            </div>
+                            <div style="background-color: var(--surface-raised); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                                <div style="font-size: 11px; color: var(--text-muted);">Structured Postings (pgvector)</div>
+                                <div id="count-structured" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">395</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">Quick Actions</h3>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Trigger schema migrations, table verifications, or cache refreshes.</p>
+                        <button class="btn-admin" id="btn-init-db"><i class='bx bx-data'></i> Initialize DB Tables</button>
+                    </div>
+                </section>
+
+                <!-- 2. DATA SOURCES & TARGET FEEDS -->
+                <section id="admin-terms-view" class="admin-view">
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">Target Search Keywords & Sources</h3>
+                            <button class="btn-admin primary" id="btn-add-term"><i class='bx bx-plus'></i> Add Query Target</button>
+                        </div>
+                        <div id="add-term-box" style="display: none; margin-bottom: 14px; padding: 12px; background-color: var(--surface-raised); border-radius: var(--radius-sm); border: 1px solid var(--border);">
+                            <input type="text" id="new-term-input" placeholder="Keyword (e.g. 'Software Engineer', 'AI Engineer')..." class="admin-input" style="margin-bottom: 8px;">
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn-admin primary" id="btn-save-term">Save Target</button>
+                                <button class="btn-admin" id="btn-cancel-term">Cancel</button>
+                            </div>
+                        </div>
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Term</th>
+                                    <th>Status</th>
+                                    <th>Created At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="terms-table-body">
+                                <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Loading search terms...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- 3. RAW INGESTED POSTINGS -->
+                <section id="admin-raw-jobs-view" class="admin-view">
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">Ingested Raw Job Posts</h3>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn-admin" id="btn-export-csv"><i class='bx bx-download'></i> Export CSV</button>
+                                <button class="btn-admin" id="btn-refresh-raw"><i class='bx bx-refresh'></i> Refresh</button>
+                            </div>
+                        </div>
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Title</th>
+                                    <th>Source</th>
+                                    <th>Company</th>
+                                    <th>Published</th>
+                                </tr>
+                            </thead>
+                            <tbody id="raw-jobs-table-body">
+                                <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Loading postings...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- 4. STRUCTURED DB (PGVECTOR) -->
+                <section id="admin-processed-jobs-view" class="admin-view">
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">Structured & Normalized Vacancies</h3>
+                            <button class="btn-admin" id="btn-refresh-processed"><i class='bx bx-refresh'></i> Refresh</button>
+                        </div>
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Role Title</th>
+                                    <th>Hard Skills</th>
+                                    <th>Seniority</th>
+                                    <th>Embedding</th>
+                                </tr>
+                            </thead>
+                            <tbody id="processed-jobs-table-body">
+                                <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">Loading structured vacancies...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- 5. INGESTION PIPELINE -->
+                <section id="admin-ingest-view" class="admin-view">
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">Scraping & Multi-Source Ingestion</h3>
+                            <button class="btn-admin primary" onclick="document.getElementById('btn-trigger-scrape').click()">Run Ingestion Thread</button>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Polls Arbeitnow, Remotive, Himalayas, Jobicy, and Gupy target feeds in an asynchronous background worker.</p>
+                        <div class="log-viewer-box" id="ingest-status-box">Worker status: Idle. Click 'Run Ingestion' to trigger an incremental scraping pass.</div>
+                    </div>
+                </section>
+
+                <!-- 6. EXTRACTION PIPELINE -->
+                <section id="admin-extract-view" class="admin-view">
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">Feature & Skill Extraction Cascade</h3>
+                            <button class="btn-admin primary" id="btn-run-batch-extract">Run Cascade Batch</button>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Applies Tier 1 (Aho-Corasick), Tier 2 (Token Boundary NER), and Tier 3 (Groq/OpenRouter) to extract skills, seniority, and generate dense pgvector embeddings.</p>
+                        <div class="log-viewer-box" id="extract-status-box">Extractor status: Ready. Click 'Run Cascade Batch' to process raw ingested postings.</div>
+                    </div>
+                </section>
+
+                <!-- 7. HEALTH & MAINTENANCE -->
+                <section id="admin-health-view" class="admin-view">
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">Database Schema & Vector Indices</h3>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Initialize and verify PostgreSQL tables, foreign key constraints, and pgvector cosine distance indices.</p>
+                        <button class="btn-admin primary" onclick="document.getElementById('btn-init-db').click()"><i class='bx bx-check-double'></i> Verify & Initialize DB</button>
+                    </div>
+                </section>
+
+                <!-- 8. SYSTEM LOGS & AUDIT -->
+                <section id="admin-logs-view" class="admin-view">
+                    <div class="admin-card">
+                        <div class="admin-card-header">
+                            <h3 style="font-size: 14px; font-weight: 600;">System Logs & Error Audit</h3>
+                            <button class="btn-admin" id="btn-refresh-logs"><i class='bx bx-refresh'></i> Refresh Logs</button>
+                        </div>
+                        <div class="log-viewer-box" id="logs-container">Loading system logs...</div>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <div id="admin-toast-container" style="position: fixed; bottom: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px;"></div>
+
+    <script src="/frontend/config.js"></script>
+    <script src="/operator/assets/admin.js"></script>
+</body>
+</html>

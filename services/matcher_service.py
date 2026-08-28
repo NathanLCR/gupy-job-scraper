@@ -62,13 +62,12 @@ def compute_skill_overlaps(
 
     # Nice to have skills
     missing_nice = [name for name in job_nice_names if name.strip().lower() not in candidate_hard]
-
-    # Ratios
+    # Ratios (0.0 if job specifies no requirements)
     hard_overlap_ratio = (
-        len(matched_hard) / max(1, len(job_hard_names)) if job_hard_names else 0.5
+        len(matched_hard) / len(job_hard_names) if job_hard_names else 0.0
     )
     soft_overlap_ratio = (
-        len(matched_soft) / max(1, len(job_soft_names)) if job_soft_names else 0.8
+        len(matched_soft) / len(job_soft_names) if job_soft_names else 0.0
     )
 
     return {
@@ -109,22 +108,44 @@ class CandidateMatcherService:
     @classmethod
     def parse_and_extract_candidate(
         cls,
-        resume_text: str,
+        raw_text: str,
+        engine: str = "cascade",
         db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
-        Extract skills from resume using Phase 2 Cascade and normalize with Phase 3 Taxonomy.
+        Extract structured skills, seniority, years of experience, and taxonomies
+        from raw candidate resume text.
         """
-        # 1. Multi-tier cascade extraction
-        extracted = extract_cascade(resume_text)
+        from services.extractor_service import extract_cascade, normalise_skill_label
+        from services.taxonomy_service import normalize_skills
 
-        # 2. Canonical taxonomy normalization
-        raw_hard = extracted.get("hard_skills") or []
-        normalized_items = normalize_skills(raw_hard, db=db)
-        canonical_hard_skills = [item.canonical_name for item in normalized_items]
+        cleaned = (raw_text or "").strip()
+        if not cleaned:
+            raise ValueError("Resume text cannot be empty")
 
-        extracted["canonical_hard_skills"] = canonical_hard_skills
-        return extracted
+        extracted = extract_cascade(cleaned)
+        hard_skills = extracted.get("hard_skills") or []
+        soft_skills = extracted.get("soft_skills") or []
+        tech_stack = extracted.get("tech_stack") or hard_skills
+
+        # Normalize canonical names
+        if db is not None:
+            normalized_items = normalize_skills(hard_skills, db=db)
+            canonical_hard = [item.canonical_name for item in normalized_items]
+        else:
+            canonical_hard = [normalise_skill_label(s) for s in hard_skills]
+
+        return {
+            "name": extracted.get("name"),
+            "seniority": extracted.get("seniority") or "Mid",
+            "years_experience": extracted.get("years_experience") or 3,
+            "hard_skills": hard_skills,
+            "canonical_hard_skills": canonical_hard,
+            "soft_skills": soft_skills,
+            "tech_stack": tech_stack,
+            "salary": extracted.get("salary"),
+            "confidence_score": extracted.get("confidence_score", 0.8),
+        }
 
     @classmethod
     def match_resume(
@@ -133,47 +154,43 @@ class CandidateMatcherService:
         db: Session,
         target_region: Optional[str] = None,
         seniority: Optional[str] = None,
-        workplace_type: Optional[str] = None,
         limit: int = 10,
         min_fit_score: float = 0.0,
     ) -> Dict[str, Any]:
         """
-        Match candidate resume text against job database with full gap analysis.
+        End-to-end candidate CV matcher against structured pgvector Job entities.
+        Computes composite fit scores, skill overlaps, and gap analyses.
         """
-        cleaned_text = (resume_text or "").strip()
-        if not cleaned_text:
-            raise ValueError("Resume text cannot be empty")
+        from entities import Job
+        from services.embedding_service import cosine_similarity, embed_candidate, embed_job
 
-        # 1. Extract and canonicalize candidate profile
-        extracted = cls.parse_and_extract_candidate(cleaned_text, db=db)
-        candidate_hard = _extract_skill_set(extracted.get("canonical_hard_skills") or extracted.get("hard_skills"))
-        candidate_soft = _extract_skill_set(extracted.get("soft_skills"))
+        # 1. Extract candidate profile
+        extracted = cls.parse_and_extract_candidate(resume_text, db=db)
+        candidate_hard = set(s.strip().lower() for s in (extracted.get("canonical_hard_skills") or extracted.get("hard_skills") or []))
+        candidate_soft = set(s.strip().lower() for s in (extracted.get("soft_skills") or []))
 
-        # 2. Compute candidate dense vector embedding
-        candidate_vec = embed_resume_text(cleaned_text, extracted_skills=extracted)
+        # 2. Dense semantic embedding for candidate
+        candidate_vec = embed_candidate(extracted)
 
-        # 3. Query candidate jobs with filters
+        # 3. Query candidate database jobs
         query = select(Job)
-        if target_region and target_region.lower() != "global":
+        if target_region and target_region.lower() not in ("global", "all"):
             query = query.where(Job.region.ilike(f"%{target_region.strip()}%"))
         if seniority:
             query = query.where(Job.seniority.ilike(f"%{seniority.strip()}%"))
-        if workplace_type:
-            query = query.where(Job.workplace_type.ilike(f"%{workplace_type.strip()}%"))
 
         jobs = db.scalars(query.limit(200)).all()
         evaluated_count = len(jobs)
 
+        # 4. Score each job against candidate
         scored_matches: List[Dict[str, Any]] = []
-        missing_skill_counter: Counter = Counter()
+        missing_skill_counter: Counter[str] = Counter()
 
-        # 4. Evaluate each job
         for job in jobs:
             job_hard_names = [s.name for s in (job.hard_skills or [])]
             job_soft_names = [s.name for s in (job.soft_skills or [])]
             job_nice_names = [s.name for s in (job.nice_to_have_skills or [])]
 
-            # Compute skill overlaps
             overlaps = compute_skill_overlaps(
                 candidate_hard=candidate_hard,
                 candidate_soft=candidate_soft,
@@ -196,6 +213,26 @@ class CandidateMatcherService:
                 vector_similarity=vec_sim,
             )
 
+            hard_pts = round(overlaps["hard_overlap_ratio"] * 50.0, 1)
+            soft_pts = round(overlaps["soft_overlap_ratio"] * 20.0, 1)
+            vector_pts = round(vec_sim * 30.0, 1)
+            total_pts = round(hard_pts + soft_pts + vector_pts, 1)
+
+            # Generate concise, human-readable match reason
+            total_req = len(job_hard_names)
+            matched_count = len(overlaps["matched_hard"])
+            sim_pct = int(round(vec_sim * 100))
+            if total_req > 0:
+                skill_rationale = f"{matched_count}/{total_req} required technical skills matched."
+            else:
+                skill_rationale = "Aligned with role tech stack requirements."
+
+            match_reason = f"Strong semantic similarity ({sim_pct}%) with role domain. {skill_rationale}"
+            if overlaps["matched_hard"]:
+                match_reason += f" Matched: {', '.join(overlaps['matched_hard'][:3])}."
+            if overlaps["missing_hard"]:
+                match_reason += f" Missing: {', '.join(overlaps['missing_hard'][:2])}."
+
             for missing_s in overlaps["missing_hard"]:
                 missing_skill_counter[missing_s] += 1
 
@@ -217,6 +254,11 @@ class CandidateMatcherService:
                     "hard_skill_overlap": round(overlaps["hard_overlap_ratio"] * 100.0, 1),
                     "soft_skill_overlap": round(overlaps["soft_overlap_ratio"] * 100.0, 1),
                     "vector_similarity": round(vec_sim * 100.0, 1),
+                    "hard_points": hard_pts,
+                    "soft_points": soft_pts,
+                    "vector_points": vector_pts,
+                    "total_points": total_pts,
+                    "match_reason": match_reason,
                     "gap_analysis": {
                         "matched_hard_skills": overlaps["matched_hard"],
                         "missing_hard_skills": overlaps["missing_hard"],
@@ -233,10 +275,53 @@ class CandidateMatcherService:
         scored_matches.sort(key=lambda m: m["fit_score"], reverse=True)
         top_matches = scored_matches[:limit]
 
-        # 5. Populate recommended high-ROI skills across top matching roles
-        top_recommended = [skill for skill, _ in missing_skill_counter.most_common(5)]
+        # 5. Populate recommended high-ROI skills tailored to each matching role
         for match in top_matches:
-            match["gap_analysis"]["recommended_skills"] = top_recommended
+            job_missing = match["gap_analysis"]["missing_hard_skills"]
+            recommended = sorted(
+                job_missing,
+                key=lambda s: missing_skill_counter.get(s, 0),
+                reverse=True,
+            )
+            for s, _ in missing_skill_counter.most_common(5):
+                if s not in recommended:
+                    recommended.append(s)
+            match["gap_analysis"]["recommended_skills"] = recommended[:5]
+
+        # 6. Candidate domain area strengths & market summary
+        domain_categories = {
+            "Backend Engineering": ["python", "go", "java", "node.js", "c#", "rust", "fastapi", "django", "flask", "spring", "express", "microservices", "rest apis", "graphql", "grpc", "celery"],
+            "Databases & Storage": ["postgresql", "mysql", "redis", "mongodb", "elasticsearch", "sql", "cassandra", "dynamodb", "oracle", "sqlite"],
+            "Cloud & DevOps": ["kubernetes", "docker", "aws", "gcp", "azure", "terraform", "ci/cd", "linux", "helm", "prometheus", "grafana", "ansible", "git"],
+            "Machine Learning & AI": ["pytorch", "tensorflow", "scikit-learn", "pandas", "numpy", "hugging face", "langchain", "rag", "pgvector", "llm", "mlops", "transformers", "nlp"],
+            "Frontend & Web": ["react", "typescript", "javascript", "vue", "angular", "next.js", "html5", "css3", "tailwindcss", "redux"],
+        }
+
+        strongest_areas = []
+        for area_name, area_skills in domain_categories.items():
+            matched_in_cat = [s for s in area_skills if s in candidate_hard]
+            if matched_in_cat:
+                ratio = min(1.0, len(matched_in_cat) / max(2, len(area_skills) * 0.4))
+                score_pct = round(60.0 + (ratio * 38.0), 0)
+            else:
+                score_pct = 40.0
+            strongest_areas.append({"area": area_name, "score": int(score_pct), "matched": matched_in_cat})
+
+        strongest_areas.sort(key=lambda x: x["score"], reverse=True)
+
+        largest_gaps = [s for s, _ in missing_skill_counter.most_common(6) if s.lower() not in candidate_hard][:5]
+        if not largest_gaps and missing_skill_counter:
+            largest_gaps = [s for s, _ in missing_skill_counter.most_common(5)][:5]
+
+        overall_fit = top_matches[0]["fit_score"] if top_matches else 0.0
+
+        candidate_summary = {
+            "overall_fit_score": overall_fit,
+            "extracted_seniority": extracted.get("seniority") or "Mid",
+            "years_experience": extracted.get("years_experience") or 3,
+            "strongest_areas": strongest_areas,
+            "largest_gaps": largest_gaps,
+        }
 
         return {
             "extracted_skills": {
@@ -244,8 +329,92 @@ class CandidateMatcherService:
                 "soft_skills": extracted.get("soft_skills") or [],
                 "tech_stack": extracted.get("tech_stack") or [],
             },
+            "candidate_summary": candidate_summary,
             "target_region": target_region,
             "total_evaluated": evaluated_count,
             "total_matches": len(top_matches),
             "matches": top_matches,
         }
+
+    @classmethod
+    def explain_fit_and_gaps(
+        cls,
+        resume_text: str,
+        job_id: int,
+        db: Session,
+    ) -> Dict[str, Any]:
+        """
+        Generate explainable breakdown and AI narrative for a candidate's fit against a specific job.
+        Keeps scoring 100% deterministic while providing optional coaching narrative.
+        """
+        job = db.get(Job, job_id)
+        if not job:
+            raise ValueError(f"Job with ID {job_id} not found")
+
+        extracted = cls.parse_and_extract_candidate(resume_text, db=db)
+        candidate_hard = set(s.lower() for s in (extracted.get("canonical_hard_skills") or extracted.get("hard_skills") or []))
+        candidate_soft = set(s.lower() for s in (extracted.get("soft_skills") or []))
+
+        job_hard_names = [s.name for s in (job.hard_skills or [])]
+        job_soft_names = [s.name for s in (job.soft_skills or [])]
+        job_nice_names = [s.name for s in (job.nice_to_have_skills or [])]
+
+        overlaps = compute_skill_overlaps(
+            candidate_hard=candidate_hard,
+            candidate_soft=candidate_soft,
+            job_hard_names=job_hard_names,
+            job_soft_names=job_soft_names,
+            job_nice_names=job_nice_names,
+        )
+
+        cand_vector = embed_resume_text(resume_text, extracted_skills=extracted)
+        job_vector = embed_job(job)
+        vec_sim = max(0.0, cosine_similarity(cand_vector, job_vector))
+
+        fit_score = calculate_composite_fit_score(
+            hard_overlap_ratio=overlaps["hard_overlap_ratio"],
+            soft_overlap_ratio=overlaps["soft_overlap_ratio"],
+            vector_similarity=vec_sim,
+        )
+
+        # Generate narrative via LLMExtractionService with SHA-256 caching
+        from features_extractors.llm_extractor import LLMExtractionService
+
+        context = (
+            f"Candidate Hard Skills: {', '.join(sorted(candidate_hard))}\n"
+            f"Job: {job.job_title} at {getattr(job.company, 'name', 'Tech Company')}\n"
+            f"Job Required Hard Skills: {', '.join(job_hard_names)}\n"
+            f"Fit Score: {fit_score}%\n"
+            f"Matched Hard Skills: {', '.join(overlaps['matched_hard'])}\n"
+            f"Missing Hard Skills: {', '.join(overlaps['missing_hard'])}"
+        )
+
+        narrative = LLMExtractionService.explain_gaps(context, db=db)
+        if not narrative or narrative.startswith("Perfil analisado"):
+            # Clean deterministic fallback template
+            if overlaps["missing_hard"]:
+                missing_str = ", ".join(overlaps["missing_hard"][:3])
+                narrative = (
+                    f"Seu perfil possui forte alinhamento ({fit_score}%) com as competências técnicas da vaga. "
+                    f"Para maximizar suas chances para a posição de {job.job_title}, foque em aprofundar conhecimentos em {missing_str}."
+                )
+            else:
+                narrative = f"Excelente alinhamento ({fit_score}%). Suas competências cobrem integralmente os requisitos técnicos essenciais exigidos para {job.job_title}."
+
+        company_name = job.company.name if job.company and hasattr(job.company, "name") else None
+
+        return {
+            "job_id": job.id,
+            "job_title": job.job_title,
+            "company": company_name,
+            "fit_score": fit_score,
+            "hard_skill_overlap": round(overlaps["hard_overlap_ratio"] * 100.0, 1),
+            "soft_skill_overlap": round(overlaps["soft_overlap_ratio"] * 100.0, 1),
+            "vector_similarity": round(vec_sim * 100.0, 1),
+            "matched_hard_skills": overlaps["matched_hard"],
+            "missing_hard_skills": overlaps["missing_hard"],
+            "recommended_upskilling": overlaps["missing_hard"][:5],
+            "explanation": narrative,
+        }
+
+

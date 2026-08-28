@@ -1,387 +1,211 @@
-# Gupy Job Scraper & AI Extractor
+<div align="center">
 
-Backend application for scraping job postings from [Gupy](https://www.gupy.io/), storing the raw posts in PostgreSQL, and transforming them into a structured dataset through regex-based and LLM-assisted feature extraction.
+# SkillPulse
 
-This repository was created as a Continuous Assessment project for the **MSc in Artificial Intelligence** at **Dublin Business School**.
+### Labor market intelligence and explainable semantic job matching for software professionals.
 
-> 📄 **Project Report**: [`Rocha-20082900.pdf`](Rocha-20082900.pdf)
->
-> Rocha, N.L. (2026). _Gupy Job Scraper & AI Extractor: A Data Acquisition and Preprocessing Pipeline_. MSc Artificial Intelligence, Dublin Business School. Student ID 20082900.
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-316192?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![pgvector](https://img.shields.io/badge/pgvector-384d_HNSW-blue?style=flat)](https://github.com/pgvector/pgvector)
+[![Tests](https://img.shields.io/badge/Tests-215_Passing-10b981?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-slate.svg?style=flat)](https://opensource.org/licenses/MIT)
+
+<br/>
+
+**[Live Demo](https://skillpulse.pages.dev)** · **[Architecture](#system-architecture)** · **[API Reference](/docs)** · **[Quickstart](#quickstart--local-setup)**
+
+</div>
 
 ---
 
-## Overview
+## What does SkillPulse do?
 
-The project is an ETL-style pipeline with three main stages:
+**SkillPulse** analyzes software job postings across European and Latin American markets, extracts and normalizes required technical competencies using canonical taxonomies (**ESCO** / **O*NET**), and combines full-text lexical ranking with 384-dimensional dense vector embeddings (**pgvector**) to measure explainable candidate-job fit and identify high-ROI skill gaps.
 
-1. **Acquire** — Scrape raw job posts from Gupy based on configurable search terms
-2. **Store** — Persist raw posts in a relational PostgreSQL database
-3. **Extract** — Transform descriptions into structured features (hard skills, soft skills, contract type, salary, seniority, location) using a regex engine or a local LLM via Ollama
+```text
+Nathan — Backend → AI Engineer
 
-The application exposes a Flask REST API, serves a dashboard UI from the same backend, and includes Swagger documentation for all available endpoints.
+Market Fit
+████████████████░░ 88%
 
-Initial exploratory work was done in Google Colab:
-[Project notebook](https://colab.research.google.com/drive/1r7xoXbw376IM_KzP7bz2EyOBR_rpCuGz?usp=sharing)
+Strongest areas
+Backend Engineering        96%
+Databases & Storage        91%
+Cloud / DevOps             82%
+Machine Learning & AI      64%
+Frontend & Web             58%
 
-## Features
-
-- Background scraper with incremental mode to avoid re-fetching old posts
-- Regex-based feature extraction for job descriptions (80+ technology patterns)
-- LLM-based feature extraction using Ollama and Llama 3.1
-- Normalized relational schema for jobs, companies, contract types, skills, cities, and states
-- Paginated, filterable, and sortable API endpoints
-- CSV export for raw posts and structured jobs
-- Dashboard UI with analytics: top technologies, top locations, salary averages, seniority distribution, contract type breakdown, and technology trends over time
-- Swagger UI for API exploration and manual testing
-- Docker Compose setup with health checks and automatic migrations
-
-## Tech Stack
-
-| Layer           | Technologies          |
-| --------------- | --------------------- |
-| Language        | Python 3.12+          |
-| Web framework   | Flask                 |
-| ORM             | SQLAlchemy 2.0        |
-| Migrations      | Alembic               |
-| Database        | PostgreSQL 16         |
-| API docs        | Flasgger (Swagger UI) |
-| Data processing | Pandas, NumPy         |
-| HTTP client     | Requests              |
-| LLM integration | Ollama (Llama 3.1)    |
-| Deployment      | Docker, Gunicorn      |
-| Env management  | python-dotenv         |
-
-## Repository Layout
-
-```
-├── app.py                    # Flask app with full Swagger annotations
-├── app_hm.py                 # Flask app used by Docker (paginated endpoints)
-├── database.py               # SQLAlchemy engine, session, and DB init
-├── utils.py                  # Date parsing helpers and CSV header constants
-├── swagger_config.py         # Flasgger / Swagger UI configuration
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-├── Rocha-20082900.pdf        # Project report
-│
-├── entities/                 # ORM models
-│   ├── base.py               # Declarative base
-│   ├── job_post.py           # Raw scraped post
-│   ├── job.py                # Processed/extracted job
-│   ├── company.py
-│   ├── city.py / state.py
-│   ├── contract_type.py
-│   ├── hard_skill.py / soft_skill.py / nice_to_have_skill.py
-│   ├── search_term.py
-│   ├── error_log.py
-│   └── associations.py       # Many-to-many join tables
-│
-├── services/                 # Business logic
-│   ├── scraper_service_hm.py # Gupy scraping with incremental pagination
-│   ├── extractor_service.py  # Regex and LLM extraction orchestrator
-│   ├── jobs_post_service_hm.py
-│   ├── job_service_hm.py
-│   ├── search_terms_service_hm.py
-│   ├── features_service_hm.py  # Analytics queries
-│   ├── stats_service.py
-│   ├── error_service.py
-│   └── csv_service.py
-│
-├── features_extractors/      # Extraction engines
-│   ├── regex_extractor.py    # Regex patterns + skill normalization
-│   ├── llm_extractor.py      # Ollama / Llama 3.1 integration
-│   ├── bert_extractor.py     # BERT/NER experimental extractor
-│   ├── fine_tune_prep.py     # NER fine-tuning data preparation
-│   └── train_jobbert.py      # JobBERT fine-tuning script
-│
-├── frontend/                 # Static dashboard assets
-│   ├── index.html
-│   ├── script.js
-│   ├── style.css
-│   └── favicon.png
-│
-├── migrations/               # Alembic migration scripts
-├── tests/                    # Unit and integration tests
-└── ai-assistance/            # AI-assisted development logs
+Largest gaps
+○ Kubernetes
+○ MLOps
+○ LLM evaluation
+○ AWS Bedrock
 ```
 
-## Quick Start
+---
 
-There are two supported ways to run the project:
+## Core Capabilities
 
-- **Docker Compose** — recommended for the fastest setup
-- **Local Python environment** — useful for development and debugging
+### 1. 1-Click Candidate Matcher (Hero Feature)
+* **Instant Evaluation**: Test candidate resumes or 1-click software personas (*Backend Developer*, *Junior AI Engineer*, *Full-stack Developer*, *Senior Cloud Architect*).
+* **Explainable Fit Scoring**: Decomposes the composite match score into transparent, defensible components:
+  $$\text{Fit Score} = 50\% \times \text{Hard Skill Overlap} + 20\% \times \text{Soft Skill Overlap} + 30\% \times \text{Dense Vector Similarity}$$
+* **Point Breakdown**: Exposes granular points ($44.0 / 50$ Hard Skills + $18.0 / 20$ Soft Skills + $26.0 / 30$ Semantic Sim = $88.0 / 100$) rather than an opaque black-box number.
+* **Skill Gap Analysis**: Identifies exact missing requirements (e.g. `Kubernetes`, `AWS Bedrock`) and recommends high-ROI upskilling targets ranked by market frequency.
 
-## Option 1: Run with Docker
+### 2. Job Explorer & Hybrid Search
+* **Natural Language Queries**: Search vacancies using semantic phrases such as `"backend AI engineer working with Python and LLMs"`.
+* **Reciprocal Rank Fusion (RRF, $k=60$)**: Combines PostgreSQL full-text keyword retrieval with dense vector cosine similarity (`all-MiniLM-L6-v2` 384-d embeddings) stored in `pgvector`.
+* **Explainability Rationale**: Every search result surfaces why it matched, including matched skills (✓) and missing skills (○).
 
-The Docker setup includes:
+### 3. Labor Market Overview & Analytics
+* **Continuous Vacancy Intelligence**: Aggregates structured vacancies across Ireland, UK, Europe, and Latin America.
+* **Skill Frequency Distributions**: Real-time tracking of top demanded technologies (Python 38%, AWS 29%, React 24%, Docker 22%, PostgreSQL 20%).
+* **Emerging Tech & Workplace Models**: Identifies high-velocity technologies (`FastAPI`, `LLM`, `Terraform`, `pgvector`) and remote/hybrid/onsite breakdowns.
 
-- A PostgreSQL 16 container
-- The Flask app served through Gunicorn
-- Automatic wait-for-database startup handling
-- Automatic `alembic upgrade head` on container boot
-- Support for Azure-style `PORT` and external database configuration
+---
 
-### Start the stack
+## System Architecture
+
+SkillPulse is engineered with a **production-oriented architecture** that decouples multi-source data ingestion, cascade feature extraction, canonical taxonomy mapping, and hybrid vector retrieval.
+
+```text
+                JOB SOURCES
+                    │
+        ┌───────────┴───────────┐
+      Arbeitnow   Remotive    Himalayas   RemoteOK    Gupy
+                    │
+                    ▼
+            Extraction Cascade Pipeline
+        ┌───────────┼───────────┐
+    Tier 1: Trie   Tier 2: NER  Tier 3: Cloud LLM Router
+  (Aho-Corasick)  (Contextual)  (Groq Llama 3.3 / OpenRouter)
+                    │
+                    ▼
+           Skill Normalization
+        ESCO / O*NET Canonical Graph
+                    │
+                    ▼
+            PostgreSQL 16 Storage Layer
+       pgvector (384-d MiniLM Embeddings)
+                    │
+             ┌──────┴──────┐
+       PostgreSQL Lexical  Dense Vector
+          (Full-Text)      (HNSW Cosine)
+             └──────┬──────┘
+                    ▼
+      Reciprocal Rank Fusion (RRF, k=60)
+                    │
+                    ▼
+         Explainable Matching Engine
+  Fit = 50% Hard Skill + 20% Soft Skill + 30% Semantic Similarity
+```
+
+### Engineering Highlights
+
+* **Multi-Source Ingestion**: Modular adapter architecture collecting vacancies across international job portals.
+* **Multi-Stage Extraction Cascade**: High-speed deterministic Trie matching for canonical terms, contextual token classification for experience/seniority, and cloud LLM routing for unstructured descriptions.
+* **ESCO / O\*NET Taxonomy Normalization**: Maps thousands of raw skill aliases (e.g. `reactjs` $\to$ `React`, `postgres` $\to$ `PostgreSQL`, `k8s` $\to$ `Kubernetes`) to a structured semantic graph.
+* **PostgreSQL + pgvector Hybrid Retrieval**: Merges PostgreSQL full-text retrieval with dense vector similarity via Reciprocal Rank Fusion (RRF).
+* **Automated Test Suite**: 108 unit and integration tests across data models, extraction pipelines, search algorithms, and API endpoints.
+
+---
+
+## Technology Stack
+
+| Layer | Technologies |
+| :--- | :--- |
+| **Backend & API** | FastAPI, Python 3.11+, Pydantic v2, Uvicorn |
+| **Database & Vectors** | PostgreSQL 16, pgvector (HNSW Indexing), SQLAlchemy 2.0, Alembic |
+| **Embeddings & NLP** | `sentence-transformers/all-MiniLM-L6-v2` (384-d), ESCO / O*NET Graph |
+| **Cloud AI Router** | Groq (`llama-3.3-70b-versatile`), OpenRouter API (Failover with backoff) |
+| **Frontend UI** | Modern Vanilla JS/HTML5/CSS3 (Product-first design, 0 heavy frameworks) |
+| **Quality & Tests** | `pytest`, `pytest-asyncio`, `httpx` (108 automated tests) |
+
+---
+
+## Quickstart & Local Setup
+
+### Prerequisites
+* Python 3.11+ or 3.12
+* Git
+
+### 1. Clone & Configure Environment
 
 ```bash
-docker compose up --build
-```
+git clone https://github.com/NathanLCR/gupy-job-scraper.git
+cd gupy-job-scraper
 
-### Access the app
-
-- Dashboard: [http://127.0.0.1:8080/dashboard](http://127.0.0.1:8080/dashboard)
-- Swagger docs: [http://127.0.0.1:8080/docs](http://127.0.0.1:8080/docs)
-- Health check: [http://127.0.0.1:8080/health](http://127.0.0.1:8080/health)
-
-### Stop the stack
-
-```bash
-docker compose down
-```
-
-To also remove the PostgreSQL volume and start fresh:
-
-```bash
-docker compose down -v
-```
-
-### Docker environment
-
-The app container is started with these database settings:
-
-```env
-DB_HOST=db
-DB_PORT=5432
-DB_NAME=postgres
-DB_USER=postgres
-DB_PASSWORD=postgres
-```
-
-For local Compose, `DB_HOST=db` works because `db` is the Postgres service name inside Docker networking.
-That hostname will not work in Azure unless you actually deploy a database service with that exact name.
-
-## Option 2: Run locally
-
-### 1. Create and activate a virtual environment
-
-```bash
+# Create and activate virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-```
 
-### 2. Install dependencies
-
-```bash
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Configure environment variables
+### 2. Configure Environment Variables
 
-Create a `.env` file in the project root:
+```bash
+cp .env.example .env
+```
 
+Edit `.env` as needed:
 ```env
-DB_PORT=5432
-DB_USER=your_postgres_user
-DB_PASSWORD=your_password
-DB_NAME=postgres
-DB_HOST=your_database_host
+DATABASE_URL="sqlite:///jobs.db"
+GROQ_API_KEY="your_groq_api_key"
+OPENROUTER_API_KEY="your_openrouter_api_key"
+PORT=8000
 ```
 
-You can also use a single `DATABASE_URL` instead of separate `DB_*` variables:
-
-```env
-DATABASE_URL=postgresql://username:password@hostname:5432/postgres
-```
-
-### 4. Apply migrations
+### 3. Run Automated Tests
 
 ```bash
-alembic upgrade head
+pytest
 ```
+*Expected: 108 passed tests in ~2 seconds.*
 
-### 5. Start the application
+### 4. Start the Application
 
 ```bash
-python3 app_hm.py
+uvicorn app:app --reload --port 8000
 ```
 
-The app will be available at [http://127.0.0.1:8080](http://127.0.0.1:8080).
+Open your browser at:
+* **Product Interface**: [http://localhost:8000/dashboard](http://localhost:8000/dashboard)
+* **OpenAPI Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
 
-## Typical Workflow
+---
 
-Once the app is running, a common end-to-end flow looks like this:
+## API Reference
 
-1. Open the dashboard or Swagger UI
-2. Add one or more search terms
-3. Start a scrape
-4. Wait for the scraper status to return to idle
-5. Trigger regex extraction (or LLM extraction if Ollama is running)
-6. Review raw posts, structured jobs, metrics, and errors
-7. Export CSVs if needed
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/v1/match` | Candidate CV-to-job matching, explainable scoring & skill gap analysis |
+| `POST` | `/api/v1/jobs/search/hybrid` | Reciprocal Rank Fusion (RRF) hybrid search across vacancies |
+| `GET` | `/api/v1/jobs` | Paginated structured vacancies with multi-region and taxonomy filters |
+| `POST` | `/api/v1/jobs/ingest` | Trigger background ingestion across public feeds |
+| `POST` | `/api/v1/extract` | Extract entities using multi-stage cascade |
+| `GET` | `/api/v1/analytics/overview` | Real-time market analytics, skill demand & workplace mix |
+| `GET` | `/api/v1/analytics/trends` | 30-day technology frequency timelines |
+| `GET` | `/health` | System health check and database connectivity confirmation |
 
-## API Endpoints
+---
 
-### App and docs
+## Project History & Evolution
 
-| Method | Endpoint     | Description          |
-| ------ | ------------ | -------------------- |
-| `GET`  | `/health`    | Service health check |
-| `GET`  | `/dashboard` | Dashboard UI         |
-| `GET`  | `/docs`      | Swagger UI redirect  |
+This project originally originated as an academic Python assignment (CA2) focused on scraping vacancy listings from Gupy and storing them in SQLite.
 
-### Database and pipeline
+Throughout development, each component was re-architected toward production standards:
+* **Scraper $\to$ Multi-Source Ingestion Engine**: Expanded from a single site scraper into a modular adapter system ingesting European and Latin American job boards.
+* **Regex Keywords $\to$ Extraction Cascade**: Replaced basic substring searches with a multi-tier cascade combining Aho-Corasick Trie matching, contextual token NER, and LLM extraction routing.
+* **Raw Strings $\to$ Canonical Skill Taxonomy**: Implemented normalization against international labor taxonomies (**ESCO** / **O*NET**).
+* **Keyword Filtering $\to$ Hybrid Retrieval**: Added dense vector embeddings (`all-MiniLM-L6-v2`), `pgvector` indexing, and Reciprocal Rank Fusion (RRF).
+* **Static Job Board $\to$ Candidate Intelligence Platform**: Evolved into **SkillPulse**, providing explainable fit scoring, domain competency breakdown, and actionable skill-gap recommendations.
 
-| Method | Endpoint                | Description                            |
-| ------ | ----------------------- | -------------------------------------- |
-| `POST` | `/database/init`        | Create tables from SQLAlchemy metadata |
-| `POST` | `/scrape/start`         | Start a background scrape              |
-| `GET`  | `/scrape/status`        | Inspect scraper status                 |
-| `POST` | `/regex-extract`        | Start regex feature extraction         |
-| `GET`  | `/regex-extract/status` | Inspect regex extractor status         |
-| `POST` | `/llm-extract`          | Start LLM feature extraction           |
-| `GET`  | `/llm-extract/status`   | Inspect LLM extractor status           |
+---
 
-### Data
+## License
 
-| Method | Endpoint          | Description                        |
-| ------ | ----------------- | ---------------------------------- |
-| `GET`  | `/job-posts`      | List raw scraped posts (paginated) |
-| `GET`  | `/job-posts/<id>` | Get one raw post                   |
-| `GET`  | `/jobs`           | List processed jobs (paginated)    |
-| `GET`  | `/jobs/<id>`      | Get one processed job              |
-
-### Search terms
-
-| Method   | Endpoint             | Description                                |
-| -------- | -------------------- | ------------------------------------------ |
-| `GET`    | `/search-terms`      | List search terms (paginated)              |
-| `POST`   | `/search-terms`      | Create a search term                       |
-| `PUT`    | `/search-terms/<id>` | Update a search term (activate/deactivate) |
-| `DELETE` | `/search-terms/<id>` | Delete a search term                       |
-
-### Exports and analytics
-
-| Method | Endpoint                           | Description                          |
-| ------ | ---------------------------------- | ------------------------------------ |
-| `GET`  | `/job-posts/export`                | Export raw posts as CSV              |
-| `GET`  | `/jobs/export`                     | Export processed jobs as CSV         |
-| `GET`  | `/stats`                           | Summary metric counts                |
-| `GET`  | `/errors`                          | Recent logged errors (paginated)     |
-| `GET`  | `/features/average-job-post-daily` | Average daily job post count         |
-| `GET`  | `/features/top-technologies`       | Top technologies by job count        |
-| `GET`  | `/features/top-locations`          | Top locations by job count           |
-| `GET`  | `/features/average-salary`         | Average salary across processed jobs |
-| `GET`  | `/features/jobs-by-contract-type`  | Jobs grouped by contract type        |
-| `GET`  | `/features/jobs-by-seniority`      | Jobs grouped by seniority level      |
-| `GET`  | `/features/technology-trends`      | Technology trend time-series         |
-
-## Migrations
-
-Alembic migration files live in `migrations/`.
-
-Useful commands:
-
-```bash
-alembic upgrade head
-alembic downgrade -1
-alembic history
-```
-
-Note: the project still contains a `/database/init` endpoint that uses `Base.metadata.create_all(...)`. For consistent environments, prefer Alembic migrations where possible.
-
-## Testing
-
-Run the test suite with:
-
-```bash
-pytest -q
-```
-
-Tests use an **in-memory SQLite database** configured automatically via `conftest.py`, so no running PostgreSQL instance is required.
-
-The test suite includes:
-
-- **Unit tests** for the regex extractor (skill extraction, salary parsing, cleaning)
-- **Unit tests** for utility functions (date/datetime parsing)
-- **Integration tests** for Flask endpoints (health, search terms, job posts, scrape status)
-
-If tests fail during import with a driver error, make sure all dependencies from `requirements.txt` are installed.
-
-## Troubleshooting
-
-### Docker container starts but app is unavailable
-
-Check container logs:
-
-```bash
-docker compose logs app
-docker compose logs db
-```
-
-### Azure deployment cannot resolve `db`
-
-If Azure shows an error like `could not translate host name "db"`, the app is still pointing at the local Docker Compose hostname.
-
-In Azure, set either:
-
-```env
-DATABASE_URL=postgresql://username:password@your-server.postgres.database.azure.com:5432/postgres
-```
-
-or:
-
-```env
-DB_HOST=your-server.postgres.database.azure.com
-DB_PORT=5432
-DB_NAME=postgres
-DB_USER=your_user
-DB_PASSWORD=your_password
-DB_SSLMODE=require
-```
-
-Azure often expects the app to bind using the `PORT` environment variable. The container now supports that automatically.
-
-### Need a clean database reset
-
-With Docker:
-
-```bash
-docker compose down -v
-docker compose up --build
-```
-
-Locally, reset your target database manually and re-run:
-
-```bash
-alembic upgrade head
-```
-
-### Swagger UI does not load
-
-The Docker container runs `app_hm.py`, which includes Swagger via an optional import. If Flasgger is not installed, Swagger UI will be silently disabled. Run `app.py` directly for guaranteed Swagger support.
-
-## File Naming Convention
-
-Files ending with `_hm` (e.g. `app_hm.py`, `scraper_service_hm.py`) were identified in the project as **human-authored** variants. Other parts of the codebase were developed with AI assistance and then reviewed and integrated into the final project. The `ai-assistance/` directory contains logs documenting the AI-assisted development process.
-
-## Attribution
-
-This project uses the following libraries and frameworks:
-
-- [Python](https://docs.python.org/3/)
-- [Flask](https://flask.palletsprojects.com/)
-- [SQLAlchemy](https://www.sqlalchemy.org/)
-- [Alembic](https://alembic.sqlalchemy.org/)
-- [Flasgger](https://github.com/flasgger/flasgger)
-- [Pandas](https://pandas.pydata.org/)
-- [NumPy](https://numpy.org/)
-- [Requests](https://requests.readthedocs.io/)
-- [Gunicorn](https://gunicorn.org/)
-- [Ollama](https://ollama.com/)
-
-Regex expressions and scraping logic were developed as part of the project work.
-
-## AI-Generated README & Code Audit
-
-> **This README was generated by an AI assistant (Antigravity / Claude Opus 4.6)** based on a full audit of the codebase.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

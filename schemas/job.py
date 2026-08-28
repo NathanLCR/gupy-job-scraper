@@ -5,6 +5,7 @@ from schemas.common import PaginationMeta
 
 class JobResponse(BaseModel):
     id: int
+    source: str = "gupy"
     job_title: str
     extractor_type: str = "regex"
     salary: Optional[int] = None
@@ -40,6 +41,7 @@ class JobListResponse(BaseModel):
 
 class JobPostResponse(BaseModel):
     id: int
+    source: str = "gupy"
     company_id: Optional[int] = None
     name: str
     description: Optional[str] = None
@@ -75,6 +77,7 @@ class JobPostListResponse(BaseModel):
 
 class JobFilterParams(BaseModel):
     search: Optional[str] = None
+    source: Optional[str] = None
     region: Optional[str] = None
     country_code: Optional[str] = None
     workplace_type: Optional[str] = None
@@ -89,11 +92,40 @@ class JobFilterParams(BaseModel):
     page_size: int = 20
 
 
+class IngestSourceInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    region: str
+    country_code: str
+    currency: str
+    endpoint: str
+    is_active: bool = True
+    supports_terms: bool = True
+
+
+class IngestSourcesResponse(BaseModel):
+    sources: List[IngestSourceInfo] = []
+
+
+class IngestStatusResponse(BaseModel):
+    running: bool
+    source: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    error: Optional[str] = None
+    total_fetched: int = 0
+    total_inserted: int = 0
+    total_skipped: int = 0
+    sources_stats: Dict[str, Any] = {}
+
+
 class JobIngestRequest(BaseModel):
-    source: str = Field(default="gupy", description="Source adapter (gupy, adzuna, public_feed, direct)")
+    source: str = Field(default="gupy", description="Source adapter (all, arbeitnow, remotive, jobicy, himalayas, remoteok, gupy)")
     term: Optional[str] = Field(default=None, description="Search term for ingestion")
     region: Optional[str] = Field(default="Latin America", description="Target region")
-    limit: Optional[int] = Field(default=20, ge=1, le=100)
+    limit: Optional[int] = Field(default=20, ge=1, le=200, description="Max jobs to fetch per source")
+    auto_extract: bool = Field(default=True, description="Automatically trigger AI extraction on newly ingested jobs")
     raw_payload: Optional[List[Dict[str, Any]]] = Field(default=None, description="Direct JSON payload for direct ingestion")
 
 

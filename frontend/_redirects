@@ -1,0 +1,20 @@
+# Cloudflare Pages SPA Routing & Static Assets
+# Proxy named SPA views to the root document. Using /index.html here causes
+# Pages' HTML canonicalization to emit a 308 redirect to /.
+/match           /             200
+/jobs            /             200
+/market          /             200
+/how-it-works    /             200
+/dashboard       /             200
+
+# The public document uses these explicit /frontend/* URLs so the same HTML
+# also works when FastAPI mounts frontend/ at that prefix. Keep this list
+# explicit: a wildcard would intercept retired admin paths before custom 404s.
+/frontend/favicon.png /favicon.png 200
+/frontend/style.css   /style.css   200
+/frontend/config.js   /config.js   200
+/frontend/script.js   /script.js   200
+
+# There is deliberately no catch-all or unsupported 404 rewrite here.
+# Pages serves /api/404.html as the nearest custom 404 for unknown /api/*
+# paths, and the top-level /404.html for all other unknown paths.

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import app
+from config import settings
 from database import SessionLocal
 from entities import Company, HardSkill, Job, SkillAlias, SkillCooccurrence, TaxonomyNode
 from services.cooccurrence_service import (
@@ -292,10 +293,14 @@ def test_api_analytics_taxonomies(client):
 
 def test_api_analytics_taxonomy_normalize(client):
     """Test POST /api/v1/analytics/taxonomy/normalize endpoint."""
+    settings.ADMIN_API_KEY = "test-operator-secret-taxonomy-tests-32"
+    headers = {"Authorization": "Bearer test-operator-secret-taxonomy-tests-32"}
     payload = {
         "skills": ["k8s", "react.js", "postgres", "fast api", "aws"]
     }
-    response = client.post("/api/v1/analytics/taxonomy/normalize", json=payload)
+    response = client.post(
+        "/api/v1/analytics/taxonomy/normalize", json=payload, headers=headers
+    )
     assert response.status_code == 200
     data = response.json()
 

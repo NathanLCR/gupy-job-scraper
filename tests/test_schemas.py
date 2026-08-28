@@ -1,3 +1,4 @@
+import json
 import pytest
 from pydantic import ValidationError
 from schemas import (
@@ -7,14 +8,39 @@ from schemas import (
     HealthResponse,
     JobFilterParams,
     JobIngestRequest,
+    LivenessResponse,
+    ReadinessResponse,
     SearchTermCreate,
 )
 
 
-def test_health_response_schema():
-    res = HealthResponse(status="ok", version="1.0.0")
+def test_liveness_response_schema():
+    res = LivenessResponse(status="ok", service="SkillPulse", version="1.0.0")
     assert res.status == "ok"
+    assert res.service == "SkillPulse"
+    assert res.version == "1.0.0"
+    data = json.loads(res.model_dump_json())
+    assert data == {"status": "ok", "service": "SkillPulse", "version": "1.0.0"}
+
+
+def test_readiness_response_schema():
+    res = ReadinessResponse(
+        status="ready",
+        database="connected",
+        schema_state="current",
+        version="1.0.0",
+    )
+    assert res.status == "ready"
     assert res.database == "connected"
+    assert res.schema_state == "current"
+
+    # Verify serialization alias produces 'schema' and NOT 'schema_state'
+    data = json.loads(res.model_dump_json(by_alias=True))
+    assert "schema" in data
+    assert "schema_state" not in data
+    assert data["schema"] == "current"
+    assert "timestamp" not in data
+    assert "environment" not in data
 
 
 def test_extraction_request_schema():

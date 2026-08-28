@@ -12,14 +12,66 @@ import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import requests
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 EMBEDDING_DIM = 384
-DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+DEFAULT_MODEL_NAME = settings.EMBEDDING_MODEL
 
 _MODEL_INSTANCE = None
 _MODEL_LOADED = False
+
+
+def _call_cloudflare_workers_ai(texts: Union[str, List[str]]) -> Optional[List[List[float]]]:
+    """
+    Invoke Cloudflare Workers AI embedding endpoint (@cf/baai/bge-small-en-v1.5, 384 dimensions).
+    Endpoint: https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}
+    """
+    account_id = settings.CF_ACCOUNT_ID
+    api_token = settings.CF_API_TOKEN
+    if not account_id or not api_token:
+        return None
+
+    model = settings.CF_EMBEDDING_MODEL or "@cf/baai/bge-small-en-v1.5"
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
+
+    payload = {"text": texts if isinstance(texts, list) else [texts]}
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        result = data.get("result")
+        if isinstance(result, dict) and "data" in result:
+            vectors = result["data"]
+            if isinstance(vectors, list) and len(vectors) > 0:
+                # Ensure each vector is normalized and exactly 384 dimensions
+                out = []
+                for v in vectors:
+                    if isinstance(v, list):
+                        norm = _normalize_vector(np.array(v, dtype=np.float32)).tolist()
+                        out.append(norm)
+                return out if out else None
+        elif isinstance(result, list):
+            out = []
+            for v in result:
+                if isinstance(v, list):
+                    norm = _normalize_vector(np.array(v, dtype=np.float32)).tolist()
+                    out.append(norm)
+            return out if out else None
+    except Exception as exc:
+        logger.warning(f"Cloudflare Workers AI embedding call failed ({exc}). Falling back.")
+        return None
+
+    return None
 
 
 def _load_transformer_model():
@@ -97,10 +149,20 @@ def _generate_fallback_embedding(text: str, dim: int = EMBEDDING_DIM) -> List[fl
 def get_embedding(text: str) -> List[float]:
     """
     Generate 384-dimensional dense vector embedding for a single text.
+    Cascade order:
+    1. Cloudflare Workers AI (@cf/baai/bge-small-en-v1.5) if CF_API_TOKEN is present
+    2. Local SentenceTransformers (e.g. all-MiniLM-L6-v2)
+    3. Deterministic pseudo-semantic fallback generator (offline & CI)
     """
     if not text or not text.strip():
         return [0.0] * EMBEDDING_DIM
 
+    # 1. Cloudflare Workers AI
+    cf_res = _call_cloudflare_workers_ai(text)
+    if cf_res and len(cf_res) > 0 and len(cf_res[0]) == EMBEDDING_DIM:
+        return cf_res[0]
+
+    # 2. Local SentenceTransformer
     model = _load_transformer_model()
     if model is not None:
         try:
@@ -109,16 +171,27 @@ def get_embedding(text: str) -> List[float]:
         except Exception as exc:
             logger.warning(f"Transformer encode failed ({exc}). Falling back to deterministic embedding.")
 
+    # 3. Deterministic pseudo-semantic fallback
     return _generate_fallback_embedding(text, dim=EMBEDDING_DIM)
 
 
 def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """
     Generate 384-dimensional dense vector embeddings for a batch of texts.
+    Cascade order:
+    1. Cloudflare Workers AI (@cf/baai/bge-small-en-v1.5) if CF_API_TOKEN is present
+    2. Local SentenceTransformers (e.g. all-MiniLM-L6-v2)
+    3. Deterministic pseudo-semantic fallback generator (offline & CI)
     """
     if not texts:
         return []
 
+    # 1. Cloudflare Workers AI batch
+    cf_res = _call_cloudflare_workers_ai(texts)
+    if cf_res and len(cf_res) == len(texts):
+        return cf_res
+
+    # 2. Local SentenceTransformer batch
     model = _load_transformer_model()
     if model is not None:
         try:
@@ -127,6 +200,7 @@ def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
         except Exception as exc:
             logger.warning(f"Transformer batch encode failed ({exc}). Falling back.")
 
+    # 3. Deterministic pseudo-semantic fallback batch
     return [_generate_fallback_embedding(t, dim=EMBEDDING_DIM) for t in texts]
 
 
@@ -195,25 +269,43 @@ def embed_job_text(
     return get_embedding(job_text)
 
 
+_JOB_EMBEDDING_CACHE: Dict[Any, List[float]] = {}
+
+
 def embed_job(job: Any) -> List[float]:
     """
-    Generate embedding from Job entity or dictionary.
+    Generate embedding from Job entity or dictionary with in-memory caching.
     """
+    job_id = None
     if isinstance(job, dict):
-        return embed_job_text(
+        job_id = job.get("id") or job.get("job_id")
+    elif hasattr(job, "id"):
+        job_id = getattr(job, "id", None)
+
+    if job_id is not None and job_id in _JOB_EMBEDDING_CACHE:
+        return _JOB_EMBEDDING_CACHE[job_id]
+
+    if isinstance(job, dict):
+        emb = embed_job_text(
             job_title=job.get("job_title", ""),
             tech_stack=job.get("tech_stack") or [],
             hard_skills=job.get("hard_skills") or [],
             description=job.get("description", ""),
             seniority=job.get("seniority"),
         )
-    return embed_job_text(
-        job_title=getattr(job, "job_title", ""),
-        tech_stack=getattr(job, "tech_stack", []) or [],
-        hard_skills=[s.name if hasattr(s, "name") else str(s) for s in (getattr(job, "hard_skills", []) or [])],
-        description=getattr(job, "description", ""),
-        seniority=getattr(job, "seniority", None),
-    )
+    else:
+        emb = embed_job_text(
+            job_title=getattr(job, "job_title", ""),
+            tech_stack=getattr(job, "tech_stack", []) or [],
+            hard_skills=[s.name if hasattr(s, "name") else str(s) for s in (getattr(job, "hard_skills", []) or [])],
+            description=getattr(job, "description", ""),
+            seniority=getattr(job, "seniority", None),
+        )
+
+    if job_id is not None:
+        _JOB_EMBEDDING_CACHE[job_id] = emb
+
+    return emb
 
 
 def embed_jobs_batch(jobs: List[Any]) -> List[List[float]]:
@@ -255,6 +347,18 @@ def embed_resume_text(
     """
     doc_text = _format_resume_text(resume_text=resume_text, extracted_skills=extracted_skills)
     return get_embedding(doc_text)
+
+
+def embed_candidate(candidate: Any) -> List[float]:
+    """
+    Generate dense vector embedding for candidate profile entity or extracted skills dict.
+    """
+    if isinstance(candidate, dict):
+        raw_text = candidate.get("raw_resume_text") or candidate.get("description") or ""
+        return embed_resume_text(raw_text, extracted_skills=candidate)
+    raw_text = getattr(candidate, "raw_resume_text", "") or ""
+    skills = getattr(candidate, "parsed_skills", {}) or {}
+    return embed_resume_text(raw_text, extracted_skills=skills)
 
 
 def embed_resumes_batch(

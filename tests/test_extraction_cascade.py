@@ -163,19 +163,66 @@ class TestTier3Extractor:
         assert data["confidence_score"] == 0.95
 
     @patch("features_extractors.llm_extractor.requests.post")
-    def test_call_ollama_success(self, mock_post):
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "response": '{"job_title": "Full Stack Lead", "nivel": "Lead", "hard_skills": ["TypeScript", "Next.js", "PostgreSQL"], "soft_skills": ["Teamwork"], "experiencia_anos": 6, "confidence_score": 0.92}'
+    def test_call_groq_success(self, mock_post):
+        from features_extractors.llm_extractor import call_groq
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '{"job_title": "Lead Cloud Architect", "seniority": "Lead", "hard_skills": ["Kubernetes", "AWS", "Terraform"], "soft_skills": ["Mentorship"], "years_experience": 6, "confidence_score": 0.96}'
+                }
+            }]
         }
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
+        mock_resp.raise_for_status.return_value = None
+        mock_post.return_value = mock_resp
 
-        res = llm_extract("Senior tech lead job posting...")
-        assert res["job_title"] == "Full Stack Lead"
-        assert res["seniority"] == "Lead"
-        assert "TypeScript" in res["hard_skills"]
-        assert res["years_experience"] == 6
+        res = call_groq("Senior Cloud Architect description", api_key="gsk_test_key")
+        assert res["job_title"] == "Lead Cloud Architect"
+        assert "Kubernetes" in res["hard_skills"]
+        assert res["confidence_score"] == 0.96
+
+    @patch("features_extractors.llm_extractor.requests.post")
+    def test_call_openrouter_success(self, mock_post):
+        from features_extractors.llm_extractor import call_openrouter
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '{"job_title": "AI Research Engineer", "seniority": "Sênior", "hard_skills": ["PyTorch", "Transformers", "pgvector"], "soft_skills": ["Research"], "years_experience": 4, "confidence_score": 0.94}'
+                }
+            }]
+        }
+        mock_resp.raise_for_status.return_value = None
+        mock_post.return_value = mock_resp
+
+        res = call_openrouter("AI Engineer description", api_key="sk-or-test_key")
+        assert res["job_title"] == "AI Research Engineer"
+        assert "PyTorch" in res["hard_skills"]
+        assert res["confidence_score"] == 0.94
+
+    @patch("features_extractors.llm_extractor.call_groq")
+    @patch("features_extractors.llm_extractor.call_openrouter")
+    def test_cloud_router_failover_from_groq_to_openrouter(self, mock_openrouter, mock_groq):
+        from features_extractors.llm_extractor import route_cloud_llm
+        from config import settings
+
+        # Groq throws 429 or returns None
+        mock_groq.return_value = None
+        mock_openrouter.return_value = {
+            "job_title": "DevOps Engineer",
+            "seniority": "Pleno",
+            "hard_skills": ["Docker", "CI/CD"],
+            "soft_skills": [],
+            "years_experience": 3,
+            "confidence_score": 0.90,
+        }
+
+        with patch.object(settings, "GROQ_API_KEY", "gsk_dummy"), patch.object(settings, "OPENROUTER_API_KEY", "sk-or-dummy"):
+            result, provider = route_cloud_llm("DevOps posting")
+            assert provider == "tier3_cloud_llm_openrouter"
+            assert result["job_title"] == "DevOps Engineer"
 
 
 # ==============================================================================
@@ -240,7 +287,7 @@ class TestConfidenceRouterCascade:
         result = extract_cascade(ambiguous_text, tier_threshold=0.85)
 
         assert mock_llm.called
-        assert result["tier_used"] == "tier3_ollama_llm"
+        assert result["tier_used"] in ("tier3_cloud_llm", "tier3_cloud_llm_groq", "tier3_cloud_llm_openrouter", "tier3_ollama_llm")
         assert result["seniority"] == "Especialista"
         assert "CustomLLM" in result["hard_skills"]
 
@@ -257,12 +304,15 @@ class TestConfidenceRouterCascade:
 class TestExtractAPIEndpoints:
 
     def test_extract_endpoint_cascade_mode(self):
+        from config import settings
+        settings.ADMIN_API_KEY = "test-operator-secret-cascade-32-chars"
+        headers = {"Authorization": "Bearer test-operator-secret-cascade-32-chars"}
         payload = {
             "text": "Desenvolvedor React Sênior. Requisitos: 6 anos de experiência com React, TypeScript, Redux e Tailwind CSS.",
             "extractor_type": "cascade",
             "tier_threshold": 0.85,
         }
-        res = client.post("/api/v1/extract", json=payload)
+        res = client.post("/api/v1/extract", json=payload, headers=headers)
         assert res.status_code == 200
         data = res.json()
         assert "React" in data["hard_skills"]
@@ -272,10 +322,18 @@ class TestExtractAPIEndpoints:
         assert data["tier_used"] in ("tier1_regex", "tier1_tier2_cascade")
 
     def test_batch_extraction_cascade_trigger(self):
-        res = client.post("/api/v1/extract/batch?engine=cascade&limit=5")
+        # 1. Unauthenticated should fail
+        unauth_res = client.post("/api/v1/extract/batch?engine=cascade&limit=5")
+        assert unauth_res.status_code == 401
+
+        # 2. Authenticated with admin key should succeed
+        from config import settings
+        settings.ADMIN_API_KEY = "test-operator-secret-cascade-32-chars"
+        headers = {"Authorization": "Bearer test-operator-secret-cascade-32-chars"}
+        res = client.post("/api/v1/extract/batch?engine=cascade&limit=5", headers=headers)
         assert res.status_code == 202
         assert res.json()["engine"] == "cascade"
 
-        status_res = client.get("/api/v1/extract/status?engine=cascade")
+        status_res = client.get("/api/v1/extract/status?engine=cascade", headers=headers)
         assert status_res.status_code == 200
         assert "running" in status_res.json()

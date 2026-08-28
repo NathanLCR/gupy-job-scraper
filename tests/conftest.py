@@ -16,7 +16,9 @@ database._engine = None
 database._session_factory = None
 
 import pytest
-from database import get_engine, init_db, SessionLocal
+from alembic import command
+from alembic.config import Config
+from database import get_engine, SessionLocal
 from entities import Base, SearchTerm, Company, City, State, ContractType, Job, HardSkill
 from entities.associations import job_hard_skills
 from services.taxonomy_service import seed_default_taxonomy
@@ -33,7 +35,11 @@ def setup_test_database():
 
     database._engine = None
     database._session_factory = None
-    init_db()
+
+    alembic_cfg = Config("alembic.ini")
+    alembic_cfg.set_main_option("script_location", "migrations")
+    alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{test_db_path}")
+    command.upgrade(alembic_cfg, "head")
 
     # Seed some sample data for testing endpoints
     db = SessionLocal()
@@ -42,8 +48,10 @@ def setup_test_database():
         seed_default_taxonomy(db)
 
         # Search Terms
-        db.add(SearchTerm(term="Python Developer", is_active=True))
-        db.add(SearchTerm(term="Data Scientist", is_active=True))
+        existing_terms = {t.term for t in db.query(SearchTerm).all()}
+        for term_str in ["Python Developer", "Data Scientist"]:
+            if term_str not in existing_terms:
+                db.add(SearchTerm(term=term_str, is_active=True))
 
         # Company, State, City, Contract
         comp = Company(name="Tech Corp Inc")

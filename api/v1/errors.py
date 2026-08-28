@@ -1,12 +1,13 @@
 from typing import Optional
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from api.v1.auth import require_admin_auth
 from schemas import ErrorLogListResponse
 from services.error_service import get_errors
 
 router = APIRouter(prefix="/errors", tags=["Diagnostics & Logs"])
 
 
-@router.get("", response_model=ErrorLogListResponse)
+@router.get("", response_model=ErrorLogListResponse, dependencies=[Depends(require_admin_auth)])
 def list_errors(
     search: Optional[str] = Query(None, description="Search term in error messages"),
     source: Optional[str] = Query(None, description="Filter by error source"),

@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import JSON, ForeignKey, Integer, String, Text, DateTime, func
+from sqlalchemy import JSON, BigInteger, ForeignKey, Integer, String, Text, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from entities.associations import (
@@ -15,7 +15,7 @@ from entities.types import Vector
 class Job(Base):
     __tablename__ = "jobs"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     job_title: Mapped[str] = mapped_column(String(255), nullable=False)
     extractor_type: Mapped[str] = mapped_column(String(50), nullable=False, default="regex")
     salary: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -25,6 +25,7 @@ class Job(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Multi-Region & Ingestion Fields
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="gupy", index=True)
     region: Mapped[str] = mapped_column(String(50), nullable=False, default="Latin America")
     country_code: Mapped[str] = mapped_column(String(10), nullable=False, default="BR")
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="BRL")
@@ -78,6 +79,7 @@ class Job(Base):
     def to_dict(self):
         return {
             "id": self.id,
+            "source": self.source,
             "job_title": self.job_title,
             "extractor_type": self.extractor_type,
             "salary": self.salary,

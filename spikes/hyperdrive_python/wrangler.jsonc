@@ -1,0 +1,16 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "skillpulse-python-hyperdrive-spike-20260821",
+  "main": "src/main.py",
+  "compatibility_date": "2026-08-21",
+  "compatibility_flags": ["python_workers"],
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "8a0dc524afec430f95df4f46178617ea"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

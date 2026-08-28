@@ -1,6 +1,7 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from api.v1.auth import require_admin_auth
 from schemas import ExtractionRequest, ExtractionResponse
 from services.extractor_service import (
     extract_cascade,
@@ -50,7 +51,7 @@ def extract_text_features(request: ExtractionRequest):
     )
 
 
-@router.post("/batch", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/batch", status_code=status.HTTP_202_ACCEPTED, dependencies=[Depends(require_admin_auth)])
 def start_batch_extraction(
     engine: str = Query("cascade", description="Extraction engine: 'cascade', 'regex', or 'llm'"),
     limit: Optional[int] = Query(None, description="Max jobs to process in this run"),
@@ -68,7 +69,7 @@ def start_batch_extraction(
         return {"message": "Regex batch extraction started in background", "engine": "regex"}
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[Depends(require_admin_auth)])
 def get_batch_extraction_status(
     engine: str = Query("regex", description="Extraction engine to check ('regex', 'llm', 'cascade')"),
 ):

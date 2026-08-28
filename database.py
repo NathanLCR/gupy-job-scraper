@@ -83,5 +83,5 @@ def get_sync_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
-    """Creates database tables synchronously (used in bootstrapping/scripts)."""
+    """Create model tables for isolated tests; production uses Alembic."""
     Base.metadata.create_all(bind=get_engine())

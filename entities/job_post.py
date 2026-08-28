@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from entities.base import Base
@@ -9,7 +9,7 @@ from entities.base import Base
 class JobPost(Base):
     __tablename__ = "jobs_posts"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
     company_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -31,6 +31,7 @@ class JobPost(Base):
     badges: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Multi-Region & Ingestion Fields
+    source: Mapped[str] = mapped_column(String(50), nullable=False, default="gupy", index=True)
     region: Mapped[str] = mapped_column(String(50), nullable=False, default="Latin America")
     country_code: Mapped[str] = mapped_column(String(10), nullable=False, default="BR")
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="BRL")
@@ -45,6 +46,7 @@ class JobPost(Base):
     def to_dict(self):
         return {
             "id": self.id,
+            "source": self.source,
             "company_id": self.company_id,
             "name": self.name,
             "description": self.description,
