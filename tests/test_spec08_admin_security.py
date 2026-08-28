@@ -219,7 +219,6 @@ def test_authenticated_mutation_attempt_is_audited_without_executing_it(caplog):
     ("PUT", "/api/v1/search-terms/1", {"term": "rust", "is_active": False}),
     ("DELETE", "/api/v1/search-terms/1", None),
     ("GET", "/api/v1/errors", None),
-    ("POST", "/database/init", None),
     ("POST", "/scrape/start", None),
     ("GET", "/scrape/status", None),
     ("POST", "/regex-extract", None),

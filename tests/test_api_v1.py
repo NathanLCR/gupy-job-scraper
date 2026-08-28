@@ -15,9 +15,10 @@ def test_health_endpoint():
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "ok"
+    assert data["status"] == "ready"
     assert "version" in data
     assert data["database"] == "connected"
+    assert data["schema"] == "current"
 
 
 def test_openapi_docs():

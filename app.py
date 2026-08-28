@@ -10,8 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from api.v1.auth import audit_operator_event, require_admin_auth
 from api.v1.router import api_v1_router
 from config import settings
-from database import init_db
-from schemas import HealthResponse
+from schemas import LivenessResponse, ReadinessResponse
+from services.readiness_service import check_database_readiness
 from services.csv_service import export_job_posts_csv, export_jobs_csv
 from services.error_service import get_errors
 from services.extractor_service import (
@@ -45,11 +45,12 @@ async def lifespan(app: FastAPI):
     # Enforce fail-closed security configuration at startup
     settings.validate_security_config()
 
-    # Startup: Ensure database tables are created
-    try:
-        init_db()
-    except Exception as exc:
-        print(f"Warning during DB init on startup: {exc}")
+    # Fail-fast database readiness check
+    result = check_database_readiness()
+    if settings.ENVIRONMENT.lower() == "production" and not result.ready:
+        raise RuntimeError(f"Startup readiness failed: {result.failure_category}")
+
+    app.state.startup_readiness = result
     yield
     # Shutdown logic if needed
 
@@ -319,28 +320,73 @@ def operator_console_assets(filename: str):
     )
 
 
-@app.get("/health", response_model=HealthResponse, tags=["Health"])
-def health_check():
-    """Health check endpoint confirming API availability and database connectivity."""
-    return HealthResponse(
-        status="ok",
-        version=settings.VERSION,
-        environment=settings.ENVIRONMENT,
-        database="connected",
+def _readiness_response() -> JSONResponse:
+    result = check_database_readiness()
+    status_code = 200 if result.ready else 503
+    payload = {
+        "status": "ready" if result.ready else "not_ready",
+        "database": result.database,
+        "schema": result.schema_state,
+        "version": settings.VERSION,
+    }
+    return JSONResponse(
+        status_code=status_code,
+        content=payload,
+        headers={"Cache-Control": "no-store"},
     )
+
+
+@app.get(
+    "/health/live",
+    response_model=LivenessResponse,
+    tags=["Health"],
+    responses={200: {"model": LivenessResponse}},
+)
+def liveness_check():
+    """Liveness probe confirming the ASGI process can accept requests."""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "ok",
+            "service": "SkillPulse",
+            "version": settings.VERSION,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get(
+    "/health/ready",
+    response_model=ReadinessResponse,
+    tags=["Health"],
+    responses={
+        200: {"model": ReadinessResponse},
+        503: {"model": ReadinessResponse},
+    },
+)
+def readiness_check():
+    """Readiness probe verifying database connectivity and current migration schema."""
+    return _readiness_response()
+
+
+@app.get(
+    "/health",
+    response_model=ReadinessResponse,
+    tags=["Health"],
+    responses={
+        200: {"model": ReadinessResponse},
+        503: {"model": ReadinessResponse},
+    },
+)
+def health_check():
+    """Compatibility alias for /health/ready."""
+    return _readiness_response()
 
 
 @app.get("/apidocs", include_in_schema=False)
 @app.get("/apidocs/", include_in_schema=False)
 def apidocs_redirect():
     return RedirectResponse(url="/docs")
-
-
-@app.post("/database/init", tags=["Database"], dependencies=[Depends(require_admin_auth)])
-def initialize_database():
-    """Manually initialize or verify database table schemas."""
-    init_db()
-    return {"message": "Database initialized"}
 
 
 # ─── Legacy & Backward Compatibility Endpoints (Protected) ────────────────────
