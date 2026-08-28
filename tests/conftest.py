@@ -24,6 +24,13 @@ from entities.associations import job_hard_skills
 from services.taxonomy_service import seed_default_taxonomy
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "redis_integration: mark test as requiring a real Redis instance"
+    )
+
+
+
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_database():
     # Remove existing test sqlite file if present
