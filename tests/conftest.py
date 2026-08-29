@@ -11,6 +11,9 @@ if root_dir not in sys.path:
 test_db_path = os.path.join(root_dir, "test_jobs.db")
 os.environ["DATABASE_URL"] = f"sqlite:///{test_db_path}"
 
+from config import settings
+settings.RATE_LIMIT_ENABLED = False
+
 import database
 database._engine = None
 database._session_factory = None
@@ -22,6 +25,13 @@ from database import get_engine, SessionLocal
 from entities import Base, SearchTerm, Company, City, State, ContractType, Job, HardSkill
 from entities.associations import job_hard_skills
 from services.taxonomy_service import seed_default_taxonomy
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "redis_integration: mark test as requiring a real Redis instance"
+    )
+
 
 
 @pytest.fixture(scope="session", autouse=True)
