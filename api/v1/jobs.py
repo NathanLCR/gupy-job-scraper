@@ -1,6 +1,7 @@
 import uuid
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from api.v1.auth import require_admin_auth
@@ -25,6 +26,7 @@ from schemas import (
 )
 from services.csv_service import export_job_posts_csv, export_jobs_csv
 from services.hybrid_search_service import hybrid_search_jobs
+from services.embedding_service import EmbeddingUnavailableError
 from services.ingestion.ingestion_manager import ingestion_manager
 from services.job_service_hm import get_job, get_jobs
 from services.jobs_post_service_hm import get_job_post, get_jobs_posts
@@ -106,27 +108,39 @@ def enqueue_job_ingestion(request: JobIngestRequest):
 @router.post("/search/hybrid", response_model=HybridSearchResponse)
 def search_jobs_hybrid(
     request: HybridSearchRequest,
+    http_request: Request,
     db: Session = Depends(get_sync_db),
 ):
     """
     Reciprocal Rank Fusion (RRF, k=60) Hybrid Search combining dense vector
     cosine similarity (Job.embedding) and sparse full-text lexical ranking.
     """
-    results = hybrid_search_jobs(
-        query=request.query,
-        db=db,
-        region=request.region,
-        country_code=request.country_code,
-        workplace_type=request.workplace_type,
-        seniority=request.seniority,
-        min_salary=request.min_salary,
-        max_salary=request.max_salary,
-        skill=request.skill,
-        location=request.location,
-        top_k=request.top_k,
-        dense_weight=request.dense_weight,
-        sparse_weight=request.sparse_weight,
-    )
+    try:
+        results = hybrid_search_jobs(
+            query=request.query,
+            db=db,
+            region=request.region,
+            country_code=request.country_code,
+            workplace_type=request.workplace_type,
+            seniority=request.seniority,
+            min_salary=request.min_salary,
+            max_salary=request.max_salary,
+            skill=request.skill,
+            location=request.location,
+            top_k=request.top_k,
+            dense_weight=request.dense_weight,
+            sparse_weight=request.sparse_weight,
+        )
+    except EmbeddingUnavailableError:
+        request_id = getattr(http_request.state, "request_id", "unassigned")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "detail": "Semantic retrieval is temporarily unavailable.",
+                "request_id": request_id,
+            },
+            headers={"Cache-Control": "no-store", "X-Request-ID": request_id},
+        )
 
     items = [
         HybridSearchItem(
@@ -145,6 +159,7 @@ def search_jobs_hybrid(
     return HybridSearchResponse(
         query=request.query,
         total_results=len(items),
+        retrieval_mode=results.retrieval_mode,
         items=items,
     )
 
@@ -217,4 +232,3 @@ def get_job_by_id(id: int):
         return job.to_dict()
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-

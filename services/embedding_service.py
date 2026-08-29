@@ -9,6 +9,7 @@ import hashlib
 import logging
 import math
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -23,6 +24,16 @@ DEFAULT_MODEL_NAME = settings.EMBEDDING_MODEL
 
 _MODEL_INSTANCE = None
 _MODEL_LOADED = False
+
+
+class EmbeddingUnavailableError(RuntimeError):
+    """The configured embedding provider did not produce a usable vector."""
+
+
+@dataclass(frozen=True)
+class EmbeddingResult:
+    vector: List[float]
+    model: str
 
 
 def _call_cloudflare_workers_ai(texts: Union[str, List[str]]) -> Optional[List[List[float]]]:
@@ -67,8 +78,11 @@ def _call_cloudflare_workers_ai(texts: Union[str, List[str]]) -> Optional[List[L
                     norm = _normalize_vector(np.array(v, dtype=np.float32)).tolist()
                     out.append(norm)
             return out if out else None
-    except Exception as exc:
-        logger.warning(f"Cloudflare Workers AI embedding call failed ({exc}). Falling back.")
+    except Exception:
+        logger.warning(
+            "embedding_provider_unavailable",
+            extra={"event": "embedding_provider_unavailable", "provider": "cloudflare"},
+        )
         return None
 
     return None
@@ -84,8 +98,11 @@ def _load_transformer_model():
         from sentence_transformers import SentenceTransformer
         logger.info(f"Loading dense embedding model: {DEFAULT_MODEL_NAME}")
         _MODEL_INSTANCE = SentenceTransformer(DEFAULT_MODEL_NAME)
-    except Exception as exc:
-        logger.info(f"SentenceTransformer not available ({exc}). Using lightweight fallback embedding generator.")
+    except Exception:
+        logger.info(
+            "embedding_provider_unavailable",
+            extra={"event": "embedding_provider_unavailable", "provider": "sentence_transformers"},
+        )
         _MODEL_INSTANCE = None
 
     _MODEL_LOADED = True
@@ -146,62 +163,95 @@ def _generate_fallback_embedding(text: str, dim: int = EMBEDDING_DIM) -> List[fl
     return norm_vec.tolist()
 
 
-def get_embedding(text: str) -> List[float]:
-    """
-    Generate 384-dimensional dense vector embedding for a single text.
-    Cascade order:
-    1. Cloudflare Workers AI (@cf/baai/bge-small-en-v1.5) if CF_API_TOKEN is present
-    2. Local SentenceTransformers (e.g. all-MiniLM-L6-v2)
-    3. Deterministic pseudo-semantic fallback generator (offline & CI)
-    """
+def embed_query_checked(text: str) -> EmbeddingResult:
+    """Embed with one configured provider and report the model that produced it."""
     if not text or not text.strip():
-        return [0.0] * EMBEDDING_DIM
+        return EmbeddingResult([0.0] * EMBEDDING_DIM, settings.ACTIVE_EMBEDDING_MODEL)
 
-    # 1. Cloudflare Workers AI
-    cf_res = _call_cloudflare_workers_ai(text)
-    if cf_res and len(cf_res) > 0 and len(cf_res[0]) == EMBEDDING_DIM:
-        return cf_res[0]
+    provider = settings.EMBEDDING_PROVIDER
+    if provider == "cloudflare":
+        cf_res = _call_cloudflare_workers_ai(text)
+        if cf_res and len(cf_res) == 1 and len(cf_res[0]) == EMBEDDING_DIM:
+            return EmbeddingResult(cf_res[0], settings.CF_EMBEDDING_MODEL)
 
-    # 2. Local SentenceTransformer
-    model = _load_transformer_model()
-    if model is not None:
-        try:
-            emb = model.encode(text, normalize_embeddings=True)
-            return emb.tolist()
-        except Exception as exc:
-            logger.warning(f"Transformer encode failed ({exc}). Falling back to deterministic embedding.")
+    elif provider == "sentence_transformers":
+        model = _load_transformer_model()
+        if model is not None:
+            try:
+                emb = model.encode(text, normalize_embeddings=True)
+                vector = emb.tolist()
+                if len(vector) == EMBEDDING_DIM:
+                    return EmbeddingResult(vector, settings.EMBEDDING_MODEL)
+            except Exception:
+                logger.warning(
+                    "embedding_provider_unavailable",
+                    extra={"event": "embedding_provider_unavailable", "provider": provider},
+                )
+    elif provider != "hash_dev_only":
+        raise EmbeddingUnavailableError("Embedding provider is not supported")
 
-    # 3. Deterministic pseudo-semantic fallback
-    return _generate_fallback_embedding(text, dim=EMBEDDING_DIM)
+    if settings.ENVIRONMENT.lower() == "production":
+        raise EmbeddingUnavailableError("Embedding provider is unavailable")
+    return EmbeddingResult(
+        _generate_fallback_embedding(text, dim=EMBEDDING_DIM), "hash-dev-v1"
+    )
 
 
-def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
-    """
-    Generate 384-dimensional dense vector embeddings for a batch of texts.
-    Cascade order:
-    1. Cloudflare Workers AI (@cf/baai/bge-small-en-v1.5) if CF_API_TOKEN is present
-    2. Local SentenceTransformers (e.g. all-MiniLM-L6-v2)
-    3. Deterministic pseudo-semantic fallback generator (offline & CI)
-    """
+def get_embedding(text: str) -> List[float]:
+    """Compatibility wrapper returning only the checked vector."""
+    return embed_query_checked(text).vector
+
+
+def embed_batch_checked(texts: List[str]) -> List[EmbeddingResult]:
     if not texts:
         return []
 
-    # 1. Cloudflare Workers AI batch
-    cf_res = _call_cloudflare_workers_ai(texts)
-    if cf_res and len(cf_res) == len(texts):
-        return cf_res
+    provider = settings.EMBEDDING_PROVIDER
+    if provider == "cloudflare":
+        cf_res = _call_cloudflare_workers_ai(texts)
+        if (
+            cf_res
+            and len(cf_res) == len(texts)
+            and all(len(vector) == EMBEDDING_DIM for vector in cf_res)
+        ):
+            return [
+                EmbeddingResult(vector, settings.CF_EMBEDDING_MODEL)
+                for vector in cf_res
+            ]
 
-    # 2. Local SentenceTransformer batch
-    model = _load_transformer_model()
-    if model is not None:
-        try:
-            embs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-            return embs.tolist()
-        except Exception as exc:
-            logger.warning(f"Transformer batch encode failed ({exc}). Falling back.")
+    elif provider == "sentence_transformers":
+        model = _load_transformer_model()
+        if model is not None:
+            try:
+                vectors = model.encode(
+                    texts, normalize_embeddings=True, show_progress_bar=False
+                ).tolist()
+                if len(vectors) == len(texts) and all(
+                    len(vector) == EMBEDDING_DIM for vector in vectors
+                ):
+                    return [
+                        EmbeddingResult(vector, settings.EMBEDDING_MODEL)
+                        for vector in vectors
+                    ]
+            except Exception:
+                logger.warning(
+                    "embedding_provider_unavailable",
+                    extra={"event": "embedding_provider_unavailable", "provider": provider},
+                )
+    elif provider != "hash_dev_only":
+        raise EmbeddingUnavailableError("Embedding provider is not supported")
 
-    # 3. Deterministic pseudo-semantic fallback batch
-    return [_generate_fallback_embedding(t, dim=EMBEDDING_DIM) for t in texts]
+    if settings.ENVIRONMENT.lower() == "production":
+        raise EmbeddingUnavailableError("Embedding provider is unavailable")
+    return [
+        EmbeddingResult(_generate_fallback_embedding(text, EMBEDDING_DIM), "hash-dev-v1")
+        for text in texts
+    ]
+
+
+def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """Compatibility wrapper returning vectors from checked batch results."""
+    return [result.vector for result in embed_batch_checked(texts)]
 
 
 def _format_job_text(
@@ -266,7 +316,24 @@ def embed_job_text(
         description=description,
         seniority=seniority,
     )
-    return get_embedding(job_text)
+    return embed_query_checked(job_text).vector
+
+
+def embed_job_text_checked(
+    job_title: str,
+    tech_stack: Optional[List[str]] = None,
+    hard_skills: Optional[List[str]] = None,
+    description: Optional[str] = None,
+    seniority: Optional[str] = None,
+) -> EmbeddingResult:
+    job_text = _format_job_text(
+        job_title=job_title,
+        tech_stack=tech_stack,
+        hard_skills=hard_skills,
+        description=description,
+        seniority=seniority,
+    )
+    return embed_query_checked(job_text)
 
 
 _JOB_EMBEDDING_CACHE: Dict[Any, List[float]] = {}

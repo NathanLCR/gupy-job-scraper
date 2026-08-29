@@ -301,7 +301,9 @@ test('Match renders exact server points from JobMatchItem contract and does not 
         status: 200,
         headers: { get: () => 'application/json' },
         json: async () => ({
+            total_eligible: 80,
             total_evaluated: 50,
+            total_qualified: 12,
             total_matches: 1,
             extracted_skills: { hard_skills: ['Python', 'SQL'], soft_skills: ['Communication'] },
             matches: [

@@ -108,11 +108,10 @@ class RedisRateLimiter:
             )
         except Exception as exc:
             logger.error(
-                "Rate limit store unavailable during evaluation",
-                exc_info=True,
-                extra={"failure_category": "rate_limit_store_unavailable", "scope": scope},
+                "rate_limit_store_unavailable",
+                extra={"event": "rate_limit_store_unavailable", "scope": scope},
             )
-            raise RateLimitUnavailableError(f"Rate limit store unavailable: {exc}") from exc
+            raise RateLimitUnavailableError("Rate limit store unavailable") from None
 
         allowed_int = int(res[0])
         current_count = int(res[1])
@@ -165,11 +164,10 @@ class RedisRateLimiter:
             self.redis.delete(key)
         except Exception as exc:
             logger.error(
-                "Rate limit store unavailable during clear",
-                exc_info=True,
-                extra={"failure_category": "rate_limit_store_unavailable", "scope": scope},
+                "rate_limit_store_unavailable",
+                extra={"event": "rate_limit_store_unavailable", "scope": scope},
             )
-            raise RateLimitUnavailableError(f"Rate limit store unavailable: {exc}") from exc
+            raise RateLimitUnavailableError("Rate limit store unavailable") from None
 
 
 _RATE_LIMITER: Optional[RedisRateLimiter] = None

@@ -71,7 +71,7 @@
             </div>
 
             <div class="admin-sidebar-footer">
-                <span style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">PostgreSQL Ready</span>
+                <span id="sidebar-health-status" style="font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);">Status pending</span>
                 <button class="btn-admin" onclick="handleAdminLogout()" title="Logout" style="padding: 3px 8px; font-size: 11px;">
                     <i class='bx bx-exit'></i> Logout
                 </button>
@@ -104,25 +104,24 @@
                         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px;">
                             <div style="background-color: var(--surface-raised); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
                                 <div style="font-size: 11px; color: var(--text-muted);">Ingestion Worker</div>
-                                <div id="status-ingestion" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">Idle</div>
+                                <div id="status-ingestion" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">Loading…</div>
                             </div>
                             <div style="background-color: var(--surface-raised); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
                                 <div style="font-size: 11px; color: var(--text-muted);">Cascade Extractor</div>
-                                <div id="status-extractor" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">Ready</div>
+                                <div id="status-extractor" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">Status unavailable</div>
                             </div>
                             <div style="background-color: var(--surface-raised); padding: 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
                                 <div style="font-size: 11px; color: var(--text-muted);">Structured Postings (pgvector)</div>
-                                <div id="count-structured" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">395</div>
+                                <div id="count-structured" style="font-size: 14px; font-weight: 600; color: var(--text); margin-top: 4px;">Loading…</div>
                             </div>
                         </div>
                     </div>
 
                     <div class="admin-card">
                         <div class="admin-card-header">
-                            <h3 style="font-size: 14px; font-weight: 600;">Quick Actions</h3>
+                            <h3 style="font-size: 14px; font-weight: 600;">Deployment status</h3>
                         </div>
-                        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Trigger schema migrations, table verifications, or cache refreshes.</p>
-                        <button class="btn-admin" id="btn-init-db"><i class='bx bx-data'></i> Initialize DB Tables</button>
+                        <p style="font-size: 12px; color: var(--text-secondary);">Schema changes are owned by the deployment migration step. This console reports state without mutating the database.</p>
                     </div>
                 </section>
 
@@ -236,10 +235,11 @@
                 <section id="admin-health-view" class="admin-view">
                     <div class="admin-card">
                         <div class="admin-card-header">
-                            <h3 style="font-size: 14px; font-weight: 600;">Database Schema & Vector Indices</h3>
+                            <h3 style="font-size: 14px; font-weight: 600;">Database and dependency readiness</h3>
+                            <button class="btn-admin" onclick="fetchReadiness()"><i class='bx bx-refresh'></i> Refresh</button>
                         </div>
-                        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Initialize and verify PostgreSQL tables, foreign key constraints, and pgvector cosine distance indices.</p>
-                        <button class="btn-admin primary" onclick="document.getElementById('btn-init-db').click()"><i class='bx bx-check-double'></i> Verify & Initialize DB</button>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 12px;">Read-only state from the application readiness endpoint.</p>
+                        <div id="database-health-status" role="status" aria-live="polite" class="log-viewer-box">Loading database, schema, and Redis state…</div>
                     </div>
                 </section>
 

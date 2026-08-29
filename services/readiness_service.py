@@ -1,5 +1,7 @@
 import logging
 import os
+import queue
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
@@ -10,7 +12,9 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
+import redis
 
+from config import settings
 from database import get_engine
 
 logger = logging.getLogger("skillpulse.readiness")
@@ -23,6 +27,52 @@ class ReadinessResult:
     schema_state: Literal["current", "outdated", "unknown"]  # NOT `schema` — shadows BaseModel
     failure_category: Optional[str] = None
     public_message: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DependencyReadiness:
+    status: Literal["connected", "degraded"]
+
+
+def _check_redis_readiness_sync(timeout_seconds: float) -> DependencyReadiness:
+    if not settings.RATE_LIMIT_ENABLED:
+        return DependencyReadiness(status="connected")
+    if not settings.REDIS_URL:
+        return DependencyReadiness(status="degraded")
+    try:
+        client = redis.Redis.from_url(
+            settings.REDIS_URL,
+            socket_connect_timeout=timeout_seconds,
+            socket_timeout=timeout_seconds,
+            decode_responses=False,
+        )
+        client.ping()
+        return DependencyReadiness(status="connected")
+    except Exception:
+        logger.error(
+            "redis_readiness_degraded",
+            extra={"event": "redis_readiness_degraded"},
+        )
+        return DependencyReadiness(status="degraded")
+
+
+def check_redis_readiness(timeout_seconds: float = 1.0) -> DependencyReadiness:
+    """Report Redis state within one wall-clock deadline without leaking details."""
+    results: queue.Queue[DependencyReadiness] = queue.Queue(maxsize=1)
+
+    def run_check() -> None:
+        results.put(_check_redis_readiness_sync(timeout_seconds))
+
+    worker = threading.Thread(target=run_check, daemon=True, name="redis-readiness")
+    worker.start()
+    worker.join(max(0.001, timeout_seconds))
+    if worker.is_alive():
+        logger.error(
+            "redis_readiness_degraded",
+            extra={"event": "redis_readiness_degraded"},
+        )
+        return DependencyReadiness(status="degraded")
+    return results.get_nowait()
 
 
 def get_current_revision(connection: Connection) -> Optional[str]:
@@ -41,15 +91,14 @@ def get_expected_head(config_path: str = "alembic.ini") -> Optional[str]:
     return script.get_current_head()
 
 
-def check_database_readiness(timeout_seconds: float = 2.0) -> ReadinessResult:
+def _check_database_readiness_sync(timeout_seconds: float) -> ReadinessResult:
     """
     Checks database connectivity with SELECT 1 and verifies that current revision matches expected head.
     Deadline bounded. Never reveals internal exception details, hostnames, credentials, or SQL text.
     """
-    engine = get_engine()
-    timeout_ms = int(timeout_seconds * 1000)
-
     try:
+        engine = get_engine()
+        timeout_ms = int(timeout_seconds * 1000)
         with engine.connect() as conn:
             if conn.dialect.name == "postgresql":
                 conn.execute(text(f"SET LOCAL statement_timeout = {timeout_ms};"))
@@ -95,9 +144,8 @@ def check_database_readiness(timeout_seconds: float = 2.0) -> ReadinessResult:
         msg = str(exc).lower()
         if "timeout" in msg:
             logger.error(
-                "Database readiness check timed out",
-                exc_info=True,
-                extra={"failure_category": "database_readiness_timeout"},
+                "database_readiness_timeout",
+                extra={"event": "database_readiness_timeout"},
             )
             return ReadinessResult(
                 ready=False,
@@ -107,9 +155,8 @@ def check_database_readiness(timeout_seconds: float = 2.0) -> ReadinessResult:
                 public_message="Database connectivity check timed out.",
             )
         logger.error(
-            "Database connection failed during readiness check",
-            exc_info=True,
-            extra={"failure_category": "database_connection_failed"},
+            "database_connection_failed",
+            extra={"event": "database_connection_failed"},
         )
         return ReadinessResult(
             ready=False,
@@ -122,9 +169,8 @@ def check_database_readiness(timeout_seconds: float = 2.0) -> ReadinessResult:
         msg = str(exc).lower()
         if "timeout" in msg:
             logger.error(
-                "Database readiness check timed out",
-                exc_info=True,
-                extra={"failure_category": "database_readiness_timeout"},
+                "database_readiness_timeout",
+                extra={"event": "database_readiness_timeout"},
             )
             return ReadinessResult(
                 ready=False,
@@ -134,9 +180,8 @@ def check_database_readiness(timeout_seconds: float = 2.0) -> ReadinessResult:
                 public_message="Database connectivity check timed out.",
             )
         logger.error(
-            "Database readiness check encountered unexpected error",
-            exc_info=True,
-            extra={"failure_category": "database_connection_failed"},
+            "database_connection_failed",
+            extra={"event": "database_connection_failed"},
         )
         return ReadinessResult(
             ready=False,
@@ -145,3 +190,28 @@ def check_database_readiness(timeout_seconds: float = 2.0) -> ReadinessResult:
             failure_category="database_connection_failed",
             public_message="Database is unavailable.",
         )
+
+
+def check_database_readiness(timeout_seconds: float = 2.0) -> ReadinessResult:
+    """Run the full connection/query/revision check within one wall-clock deadline."""
+    results: queue.Queue[ReadinessResult] = queue.Queue(maxsize=1)
+
+    def run_check() -> None:
+        results.put(_check_database_readiness_sync(timeout_seconds))
+
+    worker = threading.Thread(target=run_check, daemon=True, name="database-readiness")
+    worker.start()
+    worker.join(max(0.001, timeout_seconds))
+    if worker.is_alive():
+        logger.error(
+            "database_readiness_timeout",
+            extra={"event": "database_readiness_timeout"},
+        )
+        return ReadinessResult(
+            ready=False,
+            database="unavailable",
+            schema_state="unknown",
+            failure_category="database_readiness_timeout",
+            public_message="Database connectivity check timed out.",
+        )
+    return results.get_nowait()

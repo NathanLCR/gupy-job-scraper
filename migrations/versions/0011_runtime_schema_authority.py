@@ -18,9 +18,27 @@ down_revision = "0010_pgvector_taxonomies"
 branch_labels = None
 depends_on = None
 
+_OWNERSHIP_TABLE = "skillpulse_0011_ownership"
+
+
+def _record_owned(bind, object_name: str) -> None:
+    bind.execute(
+        sa.text(
+            f"INSERT INTO {_OWNERSHIP_TABLE} (object_name) VALUES (:object_name)"
+        ),
+        {"object_name": object_name},
+    )
+
 
 def upgrade() -> None:
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    if not inspector.has_table(_OWNERSHIP_TABLE):
+        op.create_table(
+            _OWNERSHIP_TABLE,
+            sa.Column("object_name", sa.String(length=255), primary_key=True),
+        )
     inspector = sa.inspect(bind)
 
     # 1. Inspect and reconcile `jobs.source`
@@ -28,6 +46,8 @@ def upgrade() -> None:
         columns = {c["name"]: c for c in inspector.get_columns("jobs")}
         indexes = {idx["name"] for idx in inspector.get_indexes("jobs")}
         if "source" not in columns:
+            _record_owned(bind, "column:jobs.source")
+            _record_owned(bind, "index:ix_jobs_source")
             with op.batch_alter_table("jobs", schema=None) as batch_op:
                 batch_op.add_column(
                     sa.Column("source", sa.String(length=50), nullable=False, server_default="gupy")
@@ -40,6 +60,7 @@ def upgrade() -> None:
                 raise RuntimeError(f"Incompatible column type for jobs.source: {col_type}")
 
             if col.get("nullable", True):
+                _record_owned(bind, "nullability:jobs.source")
                 op.execute("UPDATE jobs SET source = 'gupy' WHERE source IS NULL;")
                 with op.batch_alter_table("jobs", schema=None) as batch_op:
                     batch_op.alter_column(
@@ -49,6 +70,7 @@ def upgrade() -> None:
                         server_default="gupy",
                     )
             if "ix_jobs_source" not in indexes:
+                _record_owned(bind, "index:ix_jobs_source")
                 with op.batch_alter_table("jobs", schema=None) as batch_op:
                     batch_op.create_index("ix_jobs_source", ["source"], unique=False)
 
@@ -57,6 +79,8 @@ def upgrade() -> None:
         columns = {c["name"]: c for c in inspector.get_columns("jobs_posts")}
         indexes = {idx["name"] for idx in inspector.get_indexes("jobs_posts")}
         if "source" not in columns:
+            _record_owned(bind, "column:jobs_posts.source")
+            _record_owned(bind, "index:ix_jobs_posts_source")
             with op.batch_alter_table("jobs_posts", schema=None) as batch_op:
                 batch_op.add_column(
                     sa.Column("source", sa.String(length=50), nullable=False, server_default="gupy")
@@ -69,6 +93,7 @@ def upgrade() -> None:
                 raise RuntimeError(f"Incompatible column type for jobs_posts.source: {col_type}")
 
             if col.get("nullable", True):
+                _record_owned(bind, "nullability:jobs_posts.source")
                 op.execute("UPDATE jobs_posts SET source = 'gupy' WHERE source IS NULL;")
                 with op.batch_alter_table("jobs_posts", schema=None) as batch_op:
                     batch_op.alter_column(
@@ -78,11 +103,13 @@ def upgrade() -> None:
                         server_default="gupy",
                     )
             if "ix_jobs_posts_source" not in indexes:
+                _record_owned(bind, "index:ix_jobs_posts_source")
                 with op.batch_alter_table("jobs_posts", schema=None) as batch_op:
                     batch_op.create_index("ix_jobs_posts_source", ["source"], unique=False)
 
     # 3. Create `admin_sessions` table if absent, else verify columns
     if not inspector.has_table("admin_sessions"):
+        _record_owned(bind, "table:admin_sessions")
         op.create_table(
             "admin_sessions",
             sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -105,6 +132,7 @@ def upgrade() -> None:
 
     # 4. Create `llm_extractions` table if absent, else verify columns
     if not inspector.has_table("llm_extractions"):
+        _record_owned(bind, "table:llm_extractions")
         op.create_table(
             "llm_extractions",
             sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -130,19 +158,34 @@ def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
 
-    if inspector.has_table("llm_extractions"):
+    owned: set[str] = set()
+    if inspector.has_table(_OWNERSHIP_TABLE):
+        owned = set(
+            bind.execute(sa.text(f"SELECT object_name FROM {_OWNERSHIP_TABLE}"))
+            .scalars()
+            .all()
+        )
+
+    if "table:llm_extractions" in owned and inspector.has_table("llm_extractions"):
         op.drop_table("llm_extractions")
 
-    if inspector.has_table("admin_sessions"):
+    if "table:admin_sessions" in owned and inspector.has_table("admin_sessions"):
         op.drop_table("admin_sessions")
 
     if inspector.has_table("jobs_posts"):
         indexes = {idx["name"] for idx in inspector.get_indexes("jobs_posts")}
         cols = {c["name"] for c in inspector.get_columns("jobs_posts")}
         with op.batch_alter_table("jobs_posts", schema=None) as batch_op:
-            if "ix_jobs_posts_source" in indexes:
+            if "index:ix_jobs_posts_source" in owned and "ix_jobs_posts_source" in indexes:
                 batch_op.drop_index("ix_jobs_posts_source")
-            if "source" in cols:
+            if (
+                "source" in cols
+                and {
+                    "column:jobs_posts.source",
+                    "nullability:jobs_posts.source",
+                }
+                & owned
+            ):
                 batch_op.alter_column(
                     "source",
                     existing_type=sa.String(length=50),
@@ -154,12 +197,19 @@ def downgrade() -> None:
         indexes = {idx["name"] for idx in inspector.get_indexes("jobs")}
         cols = {c["name"] for c in inspector.get_columns("jobs")}
         with op.batch_alter_table("jobs", schema=None) as batch_op:
-            if "ix_jobs_source" in indexes:
+            if "index:ix_jobs_source" in owned and "ix_jobs_source" in indexes:
                 batch_op.drop_index("ix_jobs_source")
-            if "source" in cols:
+            if (
+                "source" in cols
+                and {"column:jobs.source", "nullability:jobs.source"} & owned
+            ):
                 batch_op.alter_column(
                     "source",
                     existing_type=sa.String(length=50),
                     nullable=True,
                     server_default=None,
                 )
+
+    inspector = sa.inspect(bind)
+    if inspector.has_table(_OWNERSHIP_TABLE):
+        op.drop_table(_OWNERSHIP_TABLE)

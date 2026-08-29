@@ -20,7 +20,7 @@ import logging
 
 from app import app
 from config import Settings, settings
-from api.v1.auth import AdminSessionStore, session_store, _FAILED_LOGINS
+from api.v1.auth import AdminSessionStore, session_store
 
 TEST_ADMIN_KEY = "test-operator-entropy-secret-key-32-chars-long"
 
@@ -38,7 +38,6 @@ def reset_auth_state():
     settings.ENVIRONMENT = "test"
     settings.DEBUG = False
     session_store.clear()
-    _FAILED_LOGINS.clear()
 
     yield
 
@@ -47,7 +46,6 @@ def reset_auth_state():
     settings.ENVIRONMENT = original_env
     settings.DEBUG = original_debug
     session_store.clear()
-    _FAILED_LOGINS.clear()
 
 
 # ─── 1. Production Configuration Startup Refusal ─────────────────────────────
@@ -164,7 +162,7 @@ def test_login_rate_limiting():
     # 6th attempt must be 429 Too Many Requests
     rate_limited_res = client.post("/api/v1/admin/login", json={"key": TEST_ADMIN_KEY})
     assert rate_limited_res.status_code == 429
-    assert "Too many failed login attempts" in rate_limited_res.json()["detail"]
+    assert rate_limited_res.json()["detail"] == "Rate limit exceeded. Please try again later."
     assert "Retry-After" in rate_limited_res.headers
 
 

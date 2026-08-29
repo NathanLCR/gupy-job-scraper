@@ -78,6 +78,10 @@ def test_0011_reconciles_a_create_all_database(tmp_path):
         val = conn.execute(text("SELECT source FROM jobs WHERE id = 1")).scalar()
         assert val == "gupy"
 
+    alembic_downgrade(engine, "0010_pgvector_taxonomies")
+    assert table_exists(engine, "admin_sessions")
+    assert table_exists(engine, "llm_extractions")
+
 
 def test_0011_fresh_database_upgrade_downgrade_roundtrip(tmp_path):
     db_file = tmp_path / "fresh.db"

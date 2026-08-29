@@ -8,7 +8,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-316192?style=flat&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![pgvector](https://img.shields.io/badge/pgvector-384d_HNSW-blue?style=flat)](https://github.com/pgvector/pgvector)
-[![Tests](https://img.shields.io/badge/Tests-215_Passing-10b981?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
+[![Tests](https://img.shields.io/badge/tests-pytest-10b981?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-slate.svg?style=flat)](https://opensource.org/licenses/MIT)
 
 <br/>
@@ -56,7 +56,7 @@ Largest gaps
 
 ### 2. Job Explorer & Hybrid Search
 * **Natural Language Queries**: Search vacancies using semantic phrases such as `"backend AI engineer working with Python and LLMs"`.
-* **Reciprocal Rank Fusion (RRF, $k=60$)**: Combines PostgreSQL full-text keyword retrieval with dense vector cosine similarity (`all-MiniLM-L6-v2` 384-d embeddings) stored in `pgvector`.
+* **Reciprocal Rank Fusion (RRF, $k=60$)**: Combines bounded PostgreSQL full-text retrieval with active-model dense vector cosine retrieval stored in `pgvector`.
 * **Explainability Rationale**: Every search result surfaces why it matched, including matched skills (✓) and missing skills (○).
 
 ### 3. Labor Market Overview & Analytics
@@ -88,7 +88,7 @@ SkillPulse is engineered with a **production-oriented architecture** that decoup
                     │
                     ▼
             PostgreSQL 16 Storage Layer
-       pgvector (384-d MiniLM Embeddings)
+       pgvector (384-d model-provenance embeddings)
                     │
              ┌──────┴──────┐
        PostgreSQL Lexical  Dense Vector
@@ -108,7 +108,7 @@ SkillPulse is engineered with a **production-oriented architecture** that decoup
 * **Multi-Stage Extraction Cascade**: High-speed deterministic Trie matching for canonical terms, contextual token classification for experience/seniority, and cloud LLM routing for unstructured descriptions.
 * **ESCO / O\*NET Taxonomy Normalization**: Maps thousands of raw skill aliases (e.g. `reactjs` $\to$ `React`, `postgres` $\to$ `PostgreSQL`, `k8s` $\to$ `Kubernetes`) to a structured semantic graph.
 * **PostgreSQL + pgvector Hybrid Retrieval**: Merges PostgreSQL full-text retrieval with dense vector similarity via Reciprocal Rank Fusion (RRF).
-* **Automated Test Suite**: 108 unit and integration tests across data models, extraction pipelines, search algorithms, and API endpoints.
+* **Layered Verification**: SQLite unit and contract checks run locally; PostgreSQL 16/pgvector, Redis, Docker, and browser acceptance checks are reported separately and never treated as passing when their infrastructure is absent.
 
 ---
 
@@ -118,10 +118,10 @@ SkillPulse is engineered with a **production-oriented architecture** that decoup
 | :--- | :--- |
 | **Backend & API** | FastAPI, Python 3.11+, Pydantic v2, Uvicorn |
 | **Database & Vectors** | PostgreSQL 16, pgvector (HNSW Indexing), SQLAlchemy 2.0, Alembic |
-| **Embeddings & NLP** | `sentence-transformers/all-MiniLM-L6-v2` (384-d), ESCO / O*NET Graph |
+| **Embeddings & NLP** | Cloudflare Workers AI BGE-small (production), deterministic hash vectors (development/test only), ESCO / O*NET Graph |
 | **Cloud AI Router** | Groq (`llama-3.3-70b-versatile`), OpenRouter API (Failover with backoff) |
 | **Frontend UI** | Modern Vanilla JS/HTML5/CSS3 (Product-first design, 0 heavy frameworks) |
-| **Quality & Tests** | `pytest`, `pytest-asyncio`, `httpx` (108 automated tests) |
+| **Quality & Tests** | `pytest`, `pytest-asyncio`, Node test runner, PostgreSQL/Redis integration markers |
 
 ---
 
@@ -159,12 +159,14 @@ OPENROUTER_API_KEY="your_openrouter_api_key"
 PORT=8000
 ```
 
-### 3. Run Automated Tests
+### 3. Run Local Automated Tests
 
 ```bash
-pytest
+.venv/bin/python -m pytest -q
+for f in tests/*.test.js; do node --test "$f"; done
 ```
-*Expected: 108 passed tests in ~2 seconds.*
+
+This default workflow uses SQLite for development and fast unit/contract tests. It does not substitute for the PostgreSQL 16 + pgvector or Redis integration tiers described below.
 
 ### 4. Start the Application
 
@@ -189,7 +191,38 @@ Open your browser at:
 | `POST` | `/api/v1/extract` | Extract entities using multi-stage cascade |
 | `GET` | `/api/v1/analytics/overview` | Real-time market analytics, skill demand & workplace mix |
 | `GET` | `/api/v1/analytics/trends` | 30-day technology frequency timelines |
-| `GET` | `/health` | System health check and database connectivity confirmation |
+| `GET` | `/health/live` | Dependency-free process liveness |
+| `GET` | `/health/ready` | Database-gated readiness with database, schema, and non-gating Redis detail |
+
+---
+
+## Production deployment and retrieval activation
+
+Production requires PostgreSQL 16 with pgvector, Redis 7, a configured Cloudflare Workers AI embedding provider, operator authentication, and non-placeholder secrets. Copy `.env.production.example`, replace every placeholder, and keep `POSTGRES_INDEXED_RETRIEVAL_ENABLED=false` for the first deployment.
+
+Docker Compose assigns schema ownership to the one-shot `migrate` service. The API and Celery worker wait for that service; neither runs Alembic. The worker performs a read-only schema check before starting Celery with Beat. Operator routes fail closed when the admin key is absent, and limited public/operator-login requests fail closed when Redis is unavailable. Redis degradation is visible at `/health/ready` but does not remove an otherwise database-ready API instance from service.
+
+Activate indexed retrieval in this order:
+
+1. Deploy revision `0012_postgres_indexed_retrieval` with the feature flag disabled.
+2. Populate weighted search documents in bounded batches with `python -m scripts.backfill_search_documents`.
+3. Populate current-model vectors in bounded batches with `python -m scripts.backfill_job_embeddings`.
+4. Verify valid GIN/HNSW indexes, complete search-document coverage, and at least 95% active-model embedding coverage.
+5. Set `POSTGRES_INDEXED_RETRIEVAL_ENABLED=true` and restart. Startup refuses activation if any gate is unmet.
+
+For an application rollback, disable the feature flag first; the stabilization-release legacy path remains available. Do not downgrade migration `0012` while any instance serves indexed retrieval. After all instances are flag-disabled, an Alembic downgrade may remove the revision-owned triggers, functions, indexes, and columns. Migration `0011` preserves reconciled legacy tables it did not create.
+
+### Infrastructure verification
+
+Use dedicated disposable services rather than the SQLite development database:
+
+```bash
+TEST_DATABASE_URL="postgresql://..." .venv/bin/python -m pytest -m postgres -q
+TEST_REDIS_URL="redis://127.0.0.1:6379/15" .venv/bin/python -m pytest -m redis_integration -q
+docker compose config --quiet
+```
+
+PostgreSQL acceptance includes migration round trips, trigger/invalidation behavior, the row-after-200 matcher regression, and GIN/HNSW query-plan checks. Redis acceptance includes atomic concurrency, expiration, clear/isolation, and cross-instance behavior. If those services are unavailable, pytest reports the checks as skipped with the dependency reason; that is not a production-readiness pass.
 
 ---
 
@@ -201,7 +234,7 @@ Throughout development, each component was re-architected toward production stan
 * **Scraper $\to$ Multi-Source Ingestion Engine**: Expanded from a single site scraper into a modular adapter system ingesting European and Latin American job boards.
 * **Regex Keywords $\to$ Extraction Cascade**: Replaced basic substring searches with a multi-tier cascade combining Aho-Corasick Trie matching, contextual token NER, and LLM extraction routing.
 * **Raw Strings $\to$ Canonical Skill Taxonomy**: Implemented normalization against international labor taxonomies (**ESCO** / **O*NET**).
-* **Keyword Filtering $\to$ Hybrid Retrieval**: Added dense vector embeddings (`all-MiniLM-L6-v2`), `pgvector` indexing, and Reciprocal Rank Fusion (RRF).
+* **Keyword Filtering $\to$ Hybrid Retrieval**: Added model-provenance dense embeddings, `pgvector` indexing, and Reciprocal Rank Fusion (RRF).
 * **Static Job Board $\to$ Candidate Intelligence Platform**: Evolved into **SkillPulse**, providing explainable fit scoring, domain competency breakdown, and actionable skill-gap recommendations.
 
 ---

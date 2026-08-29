@@ -7,9 +7,9 @@ and granular gap breakdown with upskilling recommendations (SPEC §3.5).
 
 from collections import Counter
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from database import SessionLocal
 from entities import CandidateProfile, HardSkill, Job, NiceToHaveSkill, SoftSkill
@@ -20,8 +20,30 @@ from services.embedding_service import (
 )
 from services.extractor_service import extract_cascade
 from services.taxonomy_service import normalize_skills
+from config import settings
+from services.embedding_service import embed_query_checked
+from services.postgres_retrieval_service import (
+    PostgresRetrievalService,
+    RetrievalFilters,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def build_candidate_lexical_query(
+    hard_skills: Sequence[str],
+    tech_stack: Sequence[str],
+    seniority: Optional[str],
+) -> str:
+    """Build stable canonical terms without candidate prose or personal data."""
+    labels: dict[str, str] = {}
+    for value in list(hard_skills) + list(tech_stack):
+        cleaned = str(value).strip()
+        if cleaned:
+            labels.setdefault(cleaned.casefold(), cleaned)
+    if seniority and seniority.strip():
+        labels.setdefault(seniority.strip().casefold(), seniority.strip())
+    return " ".join(sorted(labels.values(), key=str.casefold))
 
 
 def _extract_skill_set(skills: Optional[List[Any]]) -> Set[str]:
@@ -162,24 +184,54 @@ class CandidateMatcherService:
         Computes composite fit scores, skill overlaps, and gap analyses.
         """
         from entities import Job
-        from services.embedding_service import cosine_similarity, embed_candidate, embed_job
+        from services.embedding_service import cosine_similarity
 
         # 1. Extract candidate profile
         extracted = cls.parse_and_extract_candidate(resume_text, db=db)
         candidate_hard = set(s.strip().lower() for s in (extracted.get("canonical_hard_skills") or extracted.get("hard_skills") or []))
         candidate_soft = set(s.strip().lower() for s in (extracted.get("soft_skills") or []))
 
-        # 2. Dense semantic embedding for candidate
-        candidate_vec = embed_candidate(extracted)
+        # 2. Produce exactly one candidate vector and retain its provenance.
+        candidate_embedding = embed_query_checked(resume_text)
+        candidate_vec = candidate_embedding.vector
 
         # 3. Query candidate database jobs
         query = select(Job)
+        eligible_query = select(func.count(Job.id))
         if target_region and target_region.lower() not in ("global", "all"):
             query = query.where(Job.region.ilike(f"%{target_region.strip()}%"))
+            eligible_query = eligible_query.where(Job.region.ilike(f"%{target_region.strip()}%"))
         if seniority:
             query = query.where(Job.seniority.ilike(f"%{seniority.strip()}%"))
+            eligible_query = eligible_query.where(Job.seniority.ilike(f"%{seniority.strip()}%"))
 
-        jobs = db.scalars(query.limit(200)).all()
+        total_eligible = int(db.scalar(eligible_query) or 0)
+        if settings.POSTGRES_INDEXED_RETRIEVAL_ENABLED:
+            lexical_query = build_candidate_lexical_query(
+                extracted.get("canonical_hard_skills") or extracted.get("hard_skills") or [],
+                extracted.get("tech_stack") or [],
+                seniority,
+            )
+            retrieval = PostgresRetrievalService(db).retrieve(
+                lexical_query,
+                RetrievalFilters(region=target_region, seniority=seniority),
+                top_k=300,
+                dense_pool_size=200,
+                lexical_pool_size=200,
+                max_candidates=300,
+                query_embedding=candidate_embedding,
+            )
+            candidate_ids = [candidate.job_id for candidate in retrieval.candidates]
+            if candidate_ids:
+                selected = db.scalars(
+                    select(Job).where(Job.id.in_(candidate_ids))
+                ).unique().all()
+                by_id = {job.id: job for job in selected}
+                jobs = [by_id[job_id] for job_id in candidate_ids if job_id in by_id]
+            else:
+                jobs = []
+        else:
+            jobs = db.scalars(query.limit(200)).unique().all()
         evaluated_count = len(jobs)
 
         # 4. Score each job against candidate
@@ -200,11 +252,16 @@ class CandidateMatcherService:
             )
 
             # Compute dense vector similarity
-            job_vec = job.embedding if getattr(job, "embedding", None) is not None else embed_job(job)
-            if isinstance(job_vec, list) and job_vec:
-                vec_sim = cosine_similarity(candidate_vec, job_vec)
-            else:
-                vec_sim = 0.5
+            job_vec = getattr(job, "embedding", None)
+            semantic_available = (
+                job_vec is not None
+                and getattr(job, "embedding_model", None) == candidate_embedding.model
+            )
+            vec_sim = (
+                cosine_similarity(candidate_vec, list(job_vec))
+                if semantic_available
+                else 0.0
+            )
 
             # Calculate composite fit score: 0.50*Hard + 0.20*Soft + 0.30*Vector
             fit_score = calculate_composite_fit_score(
@@ -227,7 +284,13 @@ class CandidateMatcherService:
             else:
                 skill_rationale = "Aligned with role tech stack requirements."
 
-            match_reason = f"Strong semantic similarity ({sim_pct}%) with role domain. {skill_rationale}"
+            if not semantic_available:
+                semantic_rationale = "Semantic evidence unavailable."
+            elif vec_sim >= 0.70:
+                semantic_rationale = f"Strong semantic similarity ({sim_pct}%) with role domain."
+            else:
+                semantic_rationale = f"Semantic similarity measured at {sim_pct}%."
+            match_reason = f"{semantic_rationale} {skill_rationale}"
             if overlaps["matched_hard"]:
                 match_reason += f" Matched: {', '.join(overlaps['matched_hard'][:3])}."
             if overlaps["missing_hard"]:
@@ -272,7 +335,8 @@ class CandidateMatcherService:
                 })
 
         # Sort descending by fit score
-        scored_matches.sort(key=lambda m: m["fit_score"], reverse=True)
+        scored_matches.sort(key=lambda m: (-m["fit_score"], m["job_id"]))
+        qualified_count = len(scored_matches)
         top_matches = scored_matches[:limit]
 
         # 5. Populate recommended high-ROI skills tailored to each matching role
@@ -331,7 +395,9 @@ class CandidateMatcherService:
             },
             "candidate_summary": candidate_summary,
             "target_region": target_region,
+            "total_eligible": total_eligible,
             "total_evaluated": evaluated_count,
+            "total_qualified": qualified_count,
             "total_matches": len(top_matches),
             "matches": top_matches,
         }
@@ -416,5 +482,4 @@ class CandidateMatcherService:
             "recommended_upskilling": overlaps["missing_hard"][:5],
             "explanation": narrative,
         }
-
 

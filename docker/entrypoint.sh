@@ -36,8 +36,4 @@ print(f'Timed out waiting for PostgreSQL at {host}:{port}', file=sys.stderr)
 sys.exit(1)
 "
 
-echo "Running Alembic migrations..."
-alembic upgrade head
-
-echo "Starting application..."
 exec "$@"

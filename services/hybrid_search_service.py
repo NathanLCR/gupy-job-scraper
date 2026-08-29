@@ -19,6 +19,12 @@ from services.embedding_service import (
     embed_job,
     get_embedding,
 )
+from config import settings
+from services.postgres_retrieval_service import (
+    PostgresRetrievalService,
+    RetrievalFilters,
+    normalize_weights,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +37,10 @@ class HybridSearchResultItem:
     job: Optional[Job] = None
     job_dict: Optional[Dict[str, Any]] = None
     rrf_score: float = 0.0
-    dense_score: float = 0.0
-    sparse_score: float = 0.0
-    dense_rank: int = 0
-    sparse_rank: int = 0
+    dense_score: Optional[float] = None
+    sparse_score: Optional[float] = None
+    dense_rank: Optional[int] = None
+    sparse_rank: Optional[int] = None
     normalized_score: float = 0.0
 
 
@@ -91,7 +97,13 @@ def _compute_sparse_text_score(query_tokens: List[str], job: Job) -> float:
     return score
 
 
-def hybrid_search_jobs(
+class HybridSearchResults(list):
+    def __init__(self, values=(), retrieval_mode: str = "hybrid"):
+        super().__init__(values)
+        self.retrieval_mode = retrieval_mode
+
+
+def _hybrid_search_in_memory(
     query: str,
     db: Optional[Session] = None,
     region: Optional[str] = None,
@@ -236,3 +248,122 @@ def hybrid_search_jobs(
     finally:
         if close_db:
             db.close()
+
+
+def _hybrid_search_indexed(
+    query: str,
+    db: Session,
+    region: Optional[str],
+    country_code: Optional[str],
+    workplace_type: Optional[str],
+    seniority: Optional[str],
+    min_salary: Optional[int],
+    max_salary: Optional[int],
+    skill: Optional[str],
+    location: Optional[str],
+    top_k: int,
+    dense_weight: float,
+    sparse_weight: float,
+) -> HybridSearchResults:
+    dense_weight, sparse_weight = normalize_weights(dense_weight, sparse_weight)
+    retrieval = PostgresRetrievalService(db).retrieve(
+        query,
+        RetrievalFilters(
+            region=region,
+            country_code=country_code,
+            workplace_type=workplace_type,
+            seniority=seniority,
+            min_salary=min_salary,
+            max_salary=max_salary,
+            skill=skill,
+            location=location,
+        ),
+        top_k=top_k,
+        dense_weight=dense_weight,
+        sparse_weight=sparse_weight,
+    )
+    ids = [candidate.job_id for candidate in retrieval.candidates]
+    if not ids:
+        return HybridSearchResults((), retrieval.mode)
+
+    jobs = db.scalars(select(Job).where(Job.id.in_(ids))).unique().all()
+    jobs_by_id = {job.id: job for job in jobs}
+    max_rrf = (dense_weight / 61.0) + (sparse_weight / 61.0)
+    values = []
+    for candidate in retrieval.candidates:
+        job = jobs_by_id.get(candidate.job_id)
+        if job is None:
+            continue
+        values.append(
+            HybridSearchResultItem(
+                job_id=job.id,
+                job=job,
+                job_dict=job.to_dict(),
+                rrf_score=round(candidate.rrf_score, 6),
+                dense_score=(
+                    round(candidate.dense_score, 4)
+                    if candidate.dense_score is not None
+                    else None
+                ),
+                sparse_score=(
+                    round(candidate.sparse_score, 4)
+                    if candidate.sparse_score is not None
+                    else None
+                ),
+                dense_rank=candidate.dense_rank,
+                sparse_rank=candidate.sparse_rank,
+                normalized_score=round(
+                    min(100.0, max(0.0, candidate.rrf_score / max_rrf * 100.0)), 1
+                ),
+            )
+        )
+    return HybridSearchResults(values, retrieval.mode)
+
+
+def hybrid_search_jobs(
+    query: str,
+    db: Optional[Session] = None,
+    region: Optional[str] = None,
+    country_code: Optional[str] = None,
+    workplace_type: Optional[str] = None,
+    seniority: Optional[str] = None,
+    min_salary: Optional[int] = None,
+    max_salary: Optional[int] = None,
+    skill: Optional[str] = None,
+    location: Optional[str] = None,
+    top_k: int = 20,
+    dense_weight: float = 0.5,
+    sparse_weight: float = 0.5,
+    k: int = RRF_K,
+) -> HybridSearchResults:
+    if settings.POSTGRES_INDEXED_RETRIEVAL_ENABLED:
+        if db is None:
+            with SessionLocal() as owned_db:
+                return _hybrid_search_indexed(
+                    query, owned_db, region, country_code, workplace_type, seniority,
+                    min_salary, max_salary, skill, location, top_k,
+                    dense_weight, sparse_weight,
+                )
+        return _hybrid_search_indexed(
+            query, db, region, country_code, workplace_type, seniority,
+            min_salary, max_salary, skill, location, top_k,
+            dense_weight, sparse_weight,
+        )
+
+    values = _hybrid_search_in_memory(
+        query=query,
+        db=db,
+        region=region,
+        country_code=country_code,
+        workplace_type=workplace_type,
+        seniority=seniority,
+        min_salary=min_salary,
+        max_salary=max_salary,
+        skill=skill,
+        location=location,
+        top_k=top_k,
+        dense_weight=dense_weight,
+        sparse_weight=sparse_weight,
+        k=k,
+    )
+    return HybridSearchResults(values, "hybrid")

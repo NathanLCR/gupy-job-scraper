@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import JSON, BigInteger, ForeignKey, Integer, String, Text, DateTime, func
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from entities.associations import (
@@ -34,6 +35,13 @@ class Job(Base):
 
     # Dense Vector Embedding (384-dimensional for sentence-transformers / HNSW)
     embedding = mapped_column(Vector(384), nullable=True)
+    search_document = mapped_column(
+        TSVECTOR().with_variant(Text(), "sqlite"), nullable=True
+    )
+    embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    embedding_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Relational Foreign Keys
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), nullable=False)

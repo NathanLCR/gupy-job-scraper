@@ -4,6 +4,27 @@ import os
 import urllib.parse
 from typing import Optional, Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+
+
+_PLACEHOLDER_PARTS = ("replace_", "replace-", "your_", "your-")
+
+
+def _is_placeholder(value: str) -> bool:
+    lowered = value.strip().lower()
+    return any(part in lowered for part in _PLACEHOLDER_PARTS)
+
+
+def _ping_redis(redis_url: str, timeout_seconds: float = 1.0) -> None:
+    import redis
+
+    client = redis.Redis.from_url(
+        redis_url,
+        socket_connect_timeout=timeout_seconds,
+        socket_timeout=timeout_seconds,
+    )
+    client.ping()
 
 
 class Settings(BaseSettings):
@@ -45,8 +66,12 @@ class Settings(BaseSettings):
     CF_EMBEDDING_MODEL: str = "@cf/baai/bge-small-en-v1.5"
 
     # Dense Embeddings (Cloudflare Workers AI BGE-small / SentenceTransformers)
+    EMBEDDING_PROVIDER: str = "cloudflare"
+    ACTIVE_EMBEDDING_MODEL: str = "@cf/baai/bge-small-en-v1.5"
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
     EMBEDDING_DIM: int = 384
+    POSTGRES_INDEXED_RETRIEVAL_ENABLED: bool = False
+    EMBEDDING_REEMBED_INTERVAL_SECONDS: int = 900
 
     # Batch Extraction Engine & Rate-Limit Settings
     EXTRACTION_BATCH_SIZE: int = 15
@@ -75,6 +100,41 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     DEBUG: bool = True
     CORS_ORIGINS: str = '["https://skillpulse.pages.dev", "http://localhost:8000", "http://127.0.0.1:8000"]'
+
+    def get_cors_origins(self) -> tuple[str, ...]:
+        raw = self.CORS_ORIGINS
+        try:
+            values = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "Production configuration refusal: CORS_ORIGINS must be a valid JSON array"
+            ) from exc
+        if not isinstance(values, list) or not values:
+            raise RuntimeError(
+                "Production configuration refusal: CORS_ORIGINS must be a non-empty JSON array"
+            )
+
+        origins: list[str] = []
+        for value in values:
+            if not isinstance(value, str) or not value.strip() or value.strip() == "*":
+                raise RuntimeError(
+                    "Production configuration refusal: CORS_ORIGINS contains an invalid origin"
+                )
+            parsed = urllib.parse.urlsplit(value.strip())
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise RuntimeError(
+                    "Production configuration refusal: CORS_ORIGINS contains an invalid origin"
+                )
+            origins.append(value.strip().rstrip("/"))
+        return tuple(origins)
 
     def get_trusted_proxy_networks(self) -> tuple[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], ...]:
         raw = self.TRUSTED_PROXY_CIDRS
@@ -132,14 +192,57 @@ class Settings(BaseSettings):
         self.validate_security_config()
 
         if self.ENVIRONMENT.lower() == "production":
+            database_url = (self.DATABASE_URL or "").strip()
+            try:
+                parsed_database = make_url(database_url)
+            except (ArgumentError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "Production configuration refusal: DATABASE_URL is malformed"
+                ) from exc
+            if (
+                parsed_database.get_backend_name() != "postgresql"
+                or not parsed_database.host
+                or not parsed_database.database
+                or _is_placeholder(database_url)
+            ):
+                raise RuntimeError(
+                    "Production configuration refusal: DATABASE_URL must be a non-placeholder PostgreSQL URL"
+                )
+
+            self.get_cors_origins()
+
+            if self.EMBEDDING_PROVIDER != "cloudflare":
+                raise RuntimeError(
+                    "Production configuration refusal: EMBEDDING_PROVIDER must select the configured production provider"
+                )
+            if self.ACTIVE_EMBEDDING_MODEL != self.CF_EMBEDDING_MODEL:
+                raise RuntimeError(
+                    "Production configuration refusal: ACTIVE_EMBEDDING_MODEL must match CF_EMBEDDING_MODEL"
+                )
+            if not self.CF_ACCOUNT_ID or _is_placeholder(self.CF_ACCOUNT_ID):
+                raise RuntimeError(
+                    "Production configuration refusal: CF_ACCOUNT_ID must be configured"
+                )
+            if not self.CF_API_TOKEN or _is_placeholder(self.CF_API_TOKEN):
+                raise RuntimeError(
+                    "Production configuration refusal: CF_API_TOKEN must be configured"
+                )
+
             if not self.RATE_LIMIT_ENABLED:
                 raise RuntimeError("Production configuration refusal: RATE_LIMIT_ENABLED must be True in production")
+            if self.RATE_LIMIT_SHADOW:
+                raise RuntimeError("Production configuration refusal: RATE_LIMIT_SHADOW must be False in production")
 
             if not self.REDIS_URL or not self.REDIS_URL.strip():
                 raise RuntimeError("Production configuration refusal: REDIS_URL must be configured when RATE_LIMIT_ENABLED is True")
 
-            stripped_redis = self.REDIS_URL.strip().lower()
-            if any(p in stripped_redis for p in ("replace-", "replace_", "your-", "your_")):
+            stripped_redis = self.REDIS_URL.strip()
+            parsed_redis = urllib.parse.urlsplit(stripped_redis)
+            if (
+                parsed_redis.scheme not in {"redis", "rediss"}
+                or not parsed_redis.hostname
+                or _is_placeholder(stripped_redis)
+            ):
                 raise RuntimeError("Production configuration refusal: REDIS_URL must not be a placeholder")
 
             if not self.RATE_LIMIT_KEY_SALT or not self.RATE_LIMIT_KEY_SALT.strip():
@@ -167,6 +270,20 @@ class Settings(BaseSettings):
                 or self.RATE_LIMIT_EXTRACT_RPM <= 0
             ):
                 raise RuntimeError("Production configuration refusal: rate limits must be positive integers")
+
+    def validate_runtime_dependencies(self) -> None:
+        """Validate bounded external dependencies before a production listener starts."""
+        self.validate_runtime_config()
+        if not self.RATE_LIMIT_ENABLED:
+            return
+        if not self.REDIS_URL:
+            raise RuntimeError("Production configuration refusal: REDIS_URL must be configured")
+        try:
+            _ping_redis(self.REDIS_URL, timeout_seconds=1.0)
+        except Exception as exc:
+            raise RuntimeError(
+                "Production configuration refusal: REDIS_URL is unreachable"
+            ) from exc
 
 
     model_config = SettingsConfigDict(

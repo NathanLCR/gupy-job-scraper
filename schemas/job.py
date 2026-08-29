@@ -1,5 +1,5 @@
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any, Dict, List, Literal, Optional
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from schemas.common import PaginationMeta
 
 
@@ -130,7 +130,7 @@ class JobIngestRequest(BaseModel):
 
 
 class HybridSearchRequest(BaseModel):
-    query: str = Field(..., description="Natural language search query or keywords")
+    query: str = Field(..., max_length=4000, description="Natural language search query or keywords")
     region: Optional[str] = Field(default=None, description="Filter by region (e.g. Europe, Latin America)")
     country_code: Optional[str] = Field(default=None, description="ISO country code (e.g. IE, BR)")
     workplace_type: Optional[str] = Field(default=None, description="REMOTE, HYBRID, ONSITE")
@@ -140,22 +140,40 @@ class HybridSearchRequest(BaseModel):
     skill: Optional[str] = Field(default=None, description="Required skill keyword")
     location: Optional[str] = Field(default=None, description="City or State filter")
     top_k: int = Field(default=20, ge=1, le=100, description="Maximum number of results to return")
-    dense_weight: float = Field(default=0.5, ge=0.0, le=1.0, description="RRF weight for dense vector search")
-    sparse_weight: float = Field(default=0.5, ge=0.0, le=1.0, description="RRF weight for sparse full-text search")
+    dense_weight: float = Field(default=0.5, ge=0.0, description="RRF weight for dense vector search")
+    sparse_weight: float = Field(default=0.5, ge=0.0, description="RRF weight for sparse full-text search")
+
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("query must contain non-whitespace text")
+        return cleaned
+
+    @model_validator(mode="after")
+    def normalize_retrieval_weights(self):
+        total = self.dense_weight + self.sparse_weight
+        if total <= 0:
+            raise ValueError("dense_weight and sparse_weight must have a positive total")
+        self.dense_weight /= total
+        self.sparse_weight /= total
+        return self
 
 
 class HybridSearchItem(BaseModel):
     job_id: int
     job: JobResponse
     rrf_score: float = Field(..., description="Reciprocal Rank Fusion score (k=60)")
-    dense_score: float = Field(..., description="Cosine similarity score (0.0 to 1.0)")
-    sparse_score: float = Field(..., description="Lexical match score")
-    dense_rank: int = Field(..., description="1-based rank in dense retrieval")
-    sparse_rank: int = Field(..., description="1-based rank in sparse retrieval")
+    dense_score: Optional[float] = Field(default=None, description="Cosine similarity score (0.0 to 1.0)")
+    sparse_score: Optional[float] = Field(default=None, description="Lexical match score")
+    dense_rank: Optional[int] = Field(default=None, description="1-based rank in dense retrieval")
+    sparse_rank: Optional[int] = Field(default=None, description="1-based rank in sparse retrieval")
     normalized_score: float = Field(..., description="Normalized hybrid match score (0-100%)")
 
 
 class HybridSearchResponse(BaseModel):
     query: str
     total_results: int
+    retrieval_mode: Literal["hybrid", "dense", "lexical"]
     items: List[HybridSearchItem] = []
