@@ -23,6 +23,7 @@ class ReadinessResponse(BaseModel):
     database: Literal["connected", "unavailable"]
     schema_state: Literal["current", "outdated", "unknown"] = Field(serialization_alias="schema")
     version: str = "1.0.0"
+    dependencies: Dict[str, Literal["connected", "unavailable", "degraded"]]
 
 
 class HealthResponse(BaseModel):

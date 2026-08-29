@@ -28,7 +28,7 @@ from features_extractors.regex_extractor import (
     extract as regex_extract,
     normalise_skill_label,
 )
-from services.embedding_service import embed_job_text
+from services.embedding_service import embed_job_text_checked
 from services.error_service import log_error
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,16 @@ def normalize_skill_names(skills: Optional[List[str]]) -> List[str]:
         seen.add(key)
         normalized.append(label)
     return normalized
+
+
+def build_job_embedding_fields(**job_text_fields: Any) -> Dict[str, Any]:
+    """Build atomic vector provenance fields from the provider's actual result."""
+    result = embed_job_text_checked(**job_text_fields)
+    return {
+        "embedding": result.vector,
+        "embedding_model": result.model,
+        "embedding_updated_at": datetime.now(UTC),
+    }
 
 
 # ==============================================================================
@@ -342,7 +352,7 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                     resolved_title = (features.get("job_title") or job.name or "Vaga sem título")[:255]
 
                     # Generate 384-dimensional dense vector embedding
-                    embedding_vec = embed_job_text(
+                    embedding_fields = build_job_embedding_fields(
                         job_title=resolved_title,
                         tech_stack=tech_stack_items,
                         hard_skills=[s.name for s in hard_skills_list],
@@ -365,7 +375,7 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                         currency=getattr(job, "currency", "BRL") or "BRL",
                         workplace_type=getattr(job, "workplace_type", None) or ("REMOTE" if job.is_remote_work else "ONSITE"),
                         fingerprint=getattr(job, "fingerprint", None),
-                        embedding=embedding_vec,
+                        **embedding_fields,
                         company_id=company.id,
                         contract_type_id=contract_obj.id if contract_obj else None,
                         state_id=state_obj.id if state_obj else None,
@@ -385,14 +395,17 @@ def _run_extractor(extractor_type, extractor_fn, *, error_source, limit=None):
                 except Exception as exc:
                     db.rollback()
                     log_error(
-                        f"Failed to process job {job.id}: {exc}",
+                        f"Failed to process job {job.id}",
                         term=None,
                         page=None,
                         request_limit=None,
-                        payload=job.description,
+                        payload=None,
                         source=error_source,
                     )
-                    logger.error(f"Failed to process job {job.id}: {exc}")
+                    logger.error(
+                        "job_extraction_failed",
+                        extra={"event": "job_extraction_failed", "job_id": job.id},
+                    )
 
     except Exception as general_exc:
         with _extractor_lock:

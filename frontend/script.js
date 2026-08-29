@@ -215,7 +215,8 @@ function validateJobListResponse(data) {
 function validateCandidateMatchResponse(data) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
     if (!Array.isArray(data.matches)) return false;
-    if (typeof data.total_evaluated !== 'number' || typeof data.total_matches !== 'number') return false;
+    if (typeof data.total_eligible !== 'number' || typeof data.total_evaluated !== 'number') return false;
+    if (typeof data.total_qualified !== 'number' || typeof data.total_matches !== 'number') return false;
     if (!data.extracted_skills || typeof data.extracted_skills !== 'object') return false;
     for (const m of data.matches) {
         if (!m || typeof m !== 'object') return false;

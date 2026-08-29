@@ -61,7 +61,9 @@ const VALID_JOBS_FIXTURE = {
 };
 
 const VALID_MATCH_FIXTURE = {
+    total_eligible: 120,
     total_evaluated: 45,
+    total_qualified: 8,
     total_matches: 1,
     extracted_skills: {
         hard_skills: ['Python', 'FastAPI', 'PostgreSQL', 'Docker'],

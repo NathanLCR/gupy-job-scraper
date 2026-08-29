@@ -1,5 +1,6 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from database import get_sync_db
@@ -13,6 +14,7 @@ from schemas import (
     SkillGapExplanationResponse,
 )
 from services.matcher_service import CandidateMatcherService
+from services.embedding_service import EmbeddingUnavailableError
 from api.v1.auth import require_admin_auth
 
 router = APIRouter(prefix="/match", tags=["Candidate Matcher"])
@@ -21,6 +23,7 @@ router = APIRouter(prefix="/match", tags=["Candidate Matcher"])
 @router.post("", response_model=CandidateMatchResponse)
 def match_candidate_cv(
     request: CandidateMatchRequest,
+    http_request: Request,
     db: Session = Depends(get_sync_db),
 ):
     """
@@ -59,6 +62,16 @@ def match_candidate_cv(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
+        )
+    except EmbeddingUnavailableError:
+        request_id = getattr(http_request.state, "request_id", "unassigned")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "detail": "Semantic matching is temporarily unavailable.",
+                "request_id": request_id,
+            },
+            headers={"Cache-Control": "no-store", "X-Request-ID": request_id},
         )
 
 

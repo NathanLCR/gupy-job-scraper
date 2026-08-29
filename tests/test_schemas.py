@@ -29,6 +29,7 @@ def test_readiness_response_schema():
         database="connected",
         schema_state="current",
         version="1.0.0",
+        dependencies={"database": "connected", "redis": "connected"},
     )
     assert res.status == "ready"
     assert res.database == "connected"

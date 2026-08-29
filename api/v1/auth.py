@@ -2,15 +2,22 @@ from datetime import datetime, timedelta
 import hashlib
 import logging
 import secrets
-import time
-from typing import Dict, List, Optional
+import uuid
+from typing import Optional
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from config import settings
 from database import SessionLocal
 from entities import AdminSession
+from services.client_identity_service import (
+    digest_client_identity,
+    resolve_client_identity,
+    short_digest,
+)
+from services.rate_limit_service import RateLimitUnavailableError, get_rate_limiter
 
 router = APIRouter(prefix="/admin", tags=["Admin & Authentication"])
 audit_logger = logging.getLogger("skillpulse.audit")
@@ -106,34 +113,22 @@ class AdminSessionStore:
 
 session_store = AdminSessionStore()
 
-# Rate limit store for failed login attempts (5 failures / 15 minutes per IP)
-_FAILED_LOGINS: Dict[str, List[float]] = {}
+_LOGIN_LIMIT_SCOPE = "operator_login_failure"
+_LOGIN_LIMIT = 5
+_LOGIN_WINDOW_SECONDS = 900
 
 
-def _check_login_rate_limit(client_ip: str) -> None:
-    now = time.time()
-    window = 15 * 60.0  # 15 minutes
-    attempts = [t for t in _FAILED_LOGINS.get(client_ip, []) if now - t < window]
-    if len(attempts) >= 5:
-        retry_after = max(1, int(window - (now - attempts[0])) + 1)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many failed login attempts. Please try again in 15 minutes.",
-            headers={"Retry-After": str(retry_after), "Cache-Control": "no-store"},
-        )
-    _FAILED_LOGINS[client_ip] = attempts
-
-
-def _record_login_failure(client_ip: str) -> None:
-    now = time.time()
-    if client_ip not in _FAILED_LOGINS:
-        _FAILED_LOGINS[client_ip] = []
-    _FAILED_LOGINS[client_ip].append(now)
-
-
-def _record_login_success(client_ip: str) -> None:
-    if client_ip in _FAILED_LOGINS:
-        del _FAILED_LOGINS[client_ip]
+def _login_store_unavailable(request: Request) -> JSONResponse:
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
+    audit_operator_event("operator_login", request, result="store_unavailable")
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "detail": "Login service temporarily unavailable.",
+            "request_id": request_id,
+        },
+        headers={"Cache-Control": "no-store", "X-Request-ID": request_id},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -274,17 +269,50 @@ def admin_login(request: Request, body: AdminLoginRequest, response: Response):
     Enforces rate limits, sets an opaque HttpOnly SameSite=Strict session cookie,
     and never echoes credentials to the client.
     """
-    client_ip = (
-        request.headers.get("cf-connecting-ip")
-        or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-        or (request.client.host if request.client else "127.0.0.1")
+    identity = resolve_client_identity(
+        request,
+        trusted_networks=settings.get_trusted_proxy_networks(),
+        trust_cloudflare=settings.TRUST_CLOUDFLARE_CONNECTING_IP,
     )
+    salt = settings.RATE_LIMIT_KEY_SALT or "default-development-salt-at-least-32-chars-long"
+    subject = digest_client_identity(identity.normalized_ip, salt)
 
     try:
-        _check_login_rate_limit(client_ip)
-    except HTTPException:
+        limiter = get_rate_limiter()
+        decision = limiter.peek(
+            _LOGIN_LIMIT_SCOPE, subject, _LOGIN_LIMIT, _LOGIN_WINDOW_SECONDS
+        )
+    except RateLimitUnavailableError:
+        return _login_store_unavailable(request)
+
+    if not decision.allowed:
+        request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
+        audit_logger.warning(
+            "operator_login_rate_limited",
+            extra={
+                "event": "rate_limit_rejected",
+                "scope": _LOGIN_LIMIT_SCOPE,
+                "subject_prefix": short_digest(subject),
+                "request_id": request_id,
+            },
+        )
         audit_operator_event("operator_login", request, result="rate_limited")
-        raise
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "detail": "Rate limit exceeded. Please try again later.",
+                "retry_after_seconds": decision.retry_after_seconds,
+                "request_id": request_id,
+            },
+            headers={
+                "Retry-After": str(decision.retry_after_seconds),
+                "Cache-Control": "no-store",
+                "RateLimit-Limit": str(decision.limit),
+                "RateLimit-Remaining": "0",
+                "RateLimit-Reset": str(decision.reset_after_seconds),
+                "X-Request-ID": request_id,
+            },
+        )
 
     expected_key = settings.ADMIN_API_KEY
     if not expected_key:
@@ -296,7 +324,12 @@ def admin_login(request: Request, body: AdminLoginRequest, response: Response):
 
     provided_key = body.get_key()
     if not provided_key or not secrets.compare_digest(provided_key.encode("utf-8"), expected_key.encode("utf-8")):
-        _record_login_failure(client_ip)
+        try:
+            limiter.record(
+                _LOGIN_LIMIT_SCOPE, subject, _LOGIN_LIMIT, _LOGIN_WINDOW_SECONDS
+            )
+        except RateLimitUnavailableError:
+            return _login_store_unavailable(request)
         audit_operator_event("operator_login", request, result="failure")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -304,7 +337,10 @@ def admin_login(request: Request, body: AdminLoginRequest, response: Response):
             headers={"Cache-Control": "no-store"},
         )
 
-    _record_login_success(client_ip)
+    try:
+        limiter.clear(_LOGIN_LIMIT_SCOPE, subject)
+    except RateLimitUnavailableError:
+        return _login_store_unavailable(request)
     audit_operator_event("operator_login", request, result="success", actor="operator")
 
     # Generate opaque session token

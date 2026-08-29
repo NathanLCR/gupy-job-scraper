@@ -25,11 +25,53 @@ from database import get_engine, SessionLocal
 from entities import Base, SearchTerm, Company, City, State, ContractType, Job, HardSkill
 from entities.associations import job_hard_skills
 from services.taxonomy_service import seed_default_taxonomy
+from services.rate_limit_service import RateLimitDecision
+
+
+class InMemoryLoginLimiter:
+    """Per-test shared limiter used to keep unit tests independent of real Redis."""
+
+    def __init__(self):
+        self.counts = {}
+
+    def _decision(self, subject, limit, window_seconds):
+        count = self.counts.get(subject, 0)
+        blocked = count >= limit
+        return RateLimitDecision(
+            allowed=not blocked,
+            limit=limit,
+            remaining=max(0, limit - count),
+            retry_after_seconds=window_seconds if blocked else 0,
+            reset_after_seconds=window_seconds if count else 0,
+        )
+
+    def peek(self, scope, subject, limit, window_seconds):
+        return self._decision(subject, limit, window_seconds)
+
+    def record(self, scope, subject, limit, window_seconds):
+        self.counts[subject] = self.counts.get(subject, 0) + 1
+        return self._decision(subject, limit, window_seconds)
+
+    def clear(self, scope, subject):
+        self.counts.pop(subject, None)
+
+
+@pytest.fixture(autouse=True)
+def unit_login_limiter(monkeypatch):
+    limiter = InMemoryLoginLimiter()
+    monkeypatch.setattr("api.v1.auth.get_rate_limiter", lambda: limiter)
+    return limiter
 
 
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "redis_integration: mark test as requiring a real Redis instance"
+    )
+    config.addinivalue_line(
+        "markers", "postgres: mark test as requiring PostgreSQL 16 with pgvector"
+    )
+    config.addinivalue_line(
+        "markers", "postgres_performance: mark representative PostgreSQL plan/timing tests"
     )
 
 

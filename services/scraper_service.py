@@ -8,7 +8,7 @@ import requests
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from services.error_service import log_error
-from database import SessionLocal, init_db
+from database import SessionLocal
 from entities import JobPost, SearchTerm
 from utils import parse_datetime, parse_date
 
@@ -180,7 +180,6 @@ def insert_job_post(
         return False
 
 def populate_database(limit: int = 20) -> int:
-    init_db()
     db = SessionLocal()
     inserted = 0
 
@@ -230,7 +229,6 @@ def populate_database(limit: int = 20) -> int:
     return inserted
 
 def start_scrape() -> None:
-    init_db()
     db = SessionLocal()
     inserted = 0
 

@@ -6,7 +6,6 @@ except ModuleNotFoundError:  # pragma: no cover - local environments may skip op
             self.app = app
             self.template = template
             self.config = config
-from database import init_db
 from services.search_terms_service_hm import (
     get_search_terms,
     add_search_term,
@@ -66,19 +65,6 @@ def docs_redirect():
 @app.route("/frontend/<path:path>")
 def frontend_static(path):
     return send_from_directory('frontend', path)
-
-@app.post("/database/init")
-def initialize_database():
-    """
-    ---
-    tags:
-      - Database
-    responses:
-      200:
-        description: Tables created or already present
-    """
-    init_db()
-    return jsonify({"message": "Database initialized"}), 200
 
 @app.post("/scrape/start")
 def start_scrape():

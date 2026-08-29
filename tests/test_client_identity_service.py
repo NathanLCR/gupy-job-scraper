@@ -7,10 +7,15 @@ from starlette.requests import Request
 
 from services.client_identity_service import (
     ClientIdentity,
+    normalize_ip,
     resolve_client_identity,
     digest_client_identity,
     short_digest,
 )
+
+
+def test_zone_identifiers_are_rejected_instead_of_becoming_subjects():
+    assert normalize_ip("fe80::1%en0") is None
 
 
 def make_request(peer: str = "203.0.113.10", headers: dict[str, str] | None = None) -> Request:

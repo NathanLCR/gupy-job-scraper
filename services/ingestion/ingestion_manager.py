@@ -13,7 +13,7 @@ from threading import Lock, Thread
 from typing import Any, Dict, List, Optional
 from sqlalchemy import select
 
-from database import SessionLocal, init_db
+from database import SessionLocal
 from entities import JobPost, SearchTerm
 from services.error_service import log_error
 from services.ingestion.arbeitnow_adapter import ArbeitnowAdapter
@@ -117,7 +117,6 @@ class IngestionManager:
             if self._status["running"]:
                 return {"status": "already_running", "message": "Ingestion is already running"}
 
-            init_db()
             self._status["running"] = True
             self._status["source"] = source
             self._status["started_at"] = datetime.now(UTC).isoformat()

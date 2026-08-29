@@ -80,6 +80,9 @@ async function adminFetch(url, options = {}) {
         lockWorkspace();
         throw new Error('Unauthorized');
     }
+    if (!res.ok) {
+        throw new Error(`Request failed (${res.status})`);
+    }
     return res;
 }
 
@@ -104,6 +107,7 @@ function initAdminNavigation() {
             if (targetId === 'admin-raw-jobs-view') fetchRawJobs();
             if (targetId === 'admin-logs-view') fetchLogs();
             if (targetId === 'admin-overview-view') fetchAdminOverview();
+            if (targetId === 'admin-health-view') fetchReadiness();
         });
     });
 }
@@ -113,13 +117,13 @@ function loadInitialAdminData() {
     fetchSearchTerms();
     fetchProcessedJobs();
     fetchRawJobs();
+    fetchReadiness();
 }
 
 // ==================== Action Buttons ====================
 function initAdminActions() {
     const btnScrape = document.getElementById('btn-trigger-scrape');
     const btnExtract = document.getElementById('btn-trigger-extract');
-    const btnInitDb = document.getElementById('btn-init-db');
     const btnAddTerm = document.getElementById('btn-add-term');
     const btnCancelTerm = document.getElementById('btn-cancel-term');
     const btnSaveTerm = document.getElementById('btn-save-term');
@@ -134,12 +138,10 @@ function initAdminActions() {
             if (!confirm('Run background multi-source scraper pass across configured search feeds?')) return;
             btnScrape.disabled = true;
             try {
-                const res = await adminFetch(`${API_BASE}/scrape/start`, { method: 'POST' });
-                if (res.ok) {
-                    showAdminToast('Ingestion scraper triggered in background', 'success');
-                    const box = document.getElementById('ingest-status-box');
-                    if (box) box.innerText = 'Worker status: Running scrape passes across multi-source target feeds...';
-                }
+                await adminFetch(`${API_BASE}/scrape/start`, { method: 'POST' });
+                showAdminToast('Ingestion scraper triggered in background', 'success');
+                const box = document.getElementById('ingest-status-box');
+                if (box) box.innerText = 'Worker status: Running scrape passes across multi-source target feeds...';
             } catch {
                 showAdminToast('Failed to trigger scraper', 'error');
             } finally {
@@ -153,12 +155,10 @@ function initAdminActions() {
         const targetBtn = btnExtract || btnRunExtract;
         if (targetBtn) targetBtn.disabled = true;
         try {
-            const res = await adminFetch(`${API_BASE}/api/v1/extract/batch?engine=cascade&limit=50`, { method: 'POST' });
-            if (res.ok) {
-                showAdminToast('Batch extraction cascade started', 'success');
-                const box = document.getElementById('extract-status-box');
-                if (box) box.innerText = 'Extraction status: Processing unextracted jobs with Tier 1 (Aho-Corasick), Tier 2 (NER), and Tier 3 (Groq/OpenRouter)...';
-            }
+            await adminFetch(`${API_BASE}/api/v1/extract/batch?engine=cascade&limit=50`, { method: 'POST' });
+            showAdminToast('Batch extraction cascade started', 'success');
+            const box = document.getElementById('extract-status-box');
+            if (box) box.innerText = 'Extraction status: Processing unextracted jobs with Tier 1 (Aho-Corasick), Tier 2 (NER), and Tier 3 (Groq/OpenRouter)...';
         } catch {
             showAdminToast('Failed to start batch extraction', 'error');
         } finally {
@@ -168,21 +168,6 @@ function initAdminActions() {
 
     if (btnExtract) btnExtract.addEventListener('click', runExtractionHandler);
     if (btnRunExtract) btnRunExtract.addEventListener('click', runExtractionHandler);
-
-    if (btnInitDb) {
-        btnInitDb.addEventListener('click', async () => {
-            if (!confirm('Initialize and verify database relational schemas and pgvector extensions?')) return;
-            btnInitDb.disabled = true;
-            try {
-                const res = await adminFetch(`${API_BASE}/database/init`, { method: 'POST' });
-                if (res.ok) showAdminToast('Database initialized and schemas verified', 'success');
-            } catch {
-                showAdminToast('Failed to initialize database', 'error');
-            } finally {
-                btnInitDb.disabled = false;
-            }
-        });
-    }
 
     if (btnAddTerm) {
         btnAddTerm.addEventListener('click', () => {
@@ -206,17 +191,15 @@ function initAdminActions() {
 
             btnSaveTerm.disabled = true;
             try {
-                const res = await adminFetch(`${API_BASE}/api/v1/search-terms`, {
+                await adminFetch(`${API_BASE}/api/v1/search-terms`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ term, is_active: true })
                 });
-                if (res.ok) {
-                    showAdminToast(`Search target "${term}" added`, 'success');
-                    if (input) input.value = '';
-                    document.getElementById('add-term-box').style.display = 'none';
-                    fetchSearchTerms();
-                }
+                showAdminToast(`Search target "${term}" added`, 'success');
+                if (input) input.value = '';
+                document.getElementById('add-term-box').style.display = 'none';
+                fetchSearchTerms();
             } catch {
                 showAdminToast('Failed to add search target', 'error');
             } finally {
@@ -233,7 +216,6 @@ function initAdminActions() {
         btnExportCsv.addEventListener('click', async () => {
             try {
                 const res = await adminFetch(`${API_BASE}/job-posts/export`);
-                if (!res.ok) throw new Error('Export failed');
                 const blob = await res.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -252,22 +234,37 @@ function initAdminActions() {
 
 // ==================== Data Fetchers ====================
 async function fetchAdminOverview() {
+    const countEl = document.getElementById('count-structured');
+    const ingEl = document.getElementById('status-ingestion');
     try {
-        const statsRes = await apiFetch(`${API_BASE}/api/v1/stats`);
-        if (statsRes.ok) {
-            const stats = await statsRes.json();
-            const countEl = document.getElementById('count-structured');
-            if (countEl) countEl.innerText = stats.jobs_count || '0';
-        }
+        const statsRes = await adminFetch(`${API_BASE}/api/v1/stats`);
+        const stats = await statsRes.json();
+        if (countEl) countEl.innerText = Number.isFinite(stats.jobs_count) ? String(stats.jobs_count) : 'Unavailable';
+    } catch {
+        if (countEl) countEl.innerText = 'Unavailable';
+    }
+    try {
+        const scrapeRes = await adminFetch(`${API_BASE}/scrape/status`);
+        const sData = await scrapeRes.json();
+        if (ingEl) ingEl.innerText = sData.running ? 'Running' : 'Idle';
+    } catch {
+        if (ingEl) ingEl.innerText = 'Unavailable';
+    }
+}
 
-        const scrapeRes = await adminFetch(`${API_BASE}/scrape/status`).catch(() => null);
-        if (scrapeRes && scrapeRes.ok) {
-            const sData = await scrapeRes.json();
-            const ingEl = document.getElementById('status-ingestion');
-            if (ingEl) ingEl.innerText = sData.running ? 'Running' : 'Idle';
-        }
-    } catch (err) {
-        console.warn('Overview fetch error:', err);
+async function fetchReadiness() {
+    const statusEl = document.getElementById('database-health-status');
+    const sidebarEl = document.getElementById('sidebar-health-status');
+    try {
+        const response = await adminFetch(`${API_BASE}/health/ready`);
+        const data = await response.json();
+        const dependencies = data.dependencies || {};
+        const message = `Database: ${data.database}; schema: ${data.schema}; Redis: ${dependencies.redis || 'unavailable'}.`;
+        if (statusEl) statusEl.innerText = message;
+        if (sidebarEl) sidebarEl.innerText = data.status === 'ready' ? 'Database ready' : 'Database unavailable';
+    } catch {
+        if (statusEl) statusEl.innerText = 'Readiness status unavailable.';
+        if (sidebarEl) sidebarEl.innerText = 'Status unavailable';
     }
 }
 
@@ -277,7 +274,6 @@ async function fetchSearchTerms() {
 
     try {
         const res = await adminFetch(`${API_BASE}/api/v1/search-terms?include_inactive=true&page=1&page_size=50`);
-        if (!res.ok) return;
 
         const data = await res.json();
         const items = data.items || [];
@@ -313,11 +309,9 @@ async function fetchSearchTerms() {
 window.deleteSearchTerm = async function(id) {
     if (!confirm('Remove this search term query target?')) return;
     try {
-        const res = await adminFetch(`${API_BASE}/api/v1/search-terms/${id}`, { method: 'DELETE' });
-        if (res.ok) {
-            showAdminToast('Search target removed', 'success');
-            fetchSearchTerms();
-        }
+        await adminFetch(`${API_BASE}/api/v1/search-terms/${id}`, { method: 'DELETE' });
+        showAdminToast('Search target removed', 'success');
+        fetchSearchTerms();
     } catch {
         showAdminToast('Failed to delete target', 'error');
     }
@@ -328,8 +322,7 @@ async function fetchProcessedJobs() {
     if (!tbody) return;
 
     try {
-        const res = await apiFetch(`${API_BASE}/api/v1/jobs?page=1&page_size=25`);
-        if (!res.ok) return;
+        const res = await adminFetch(`${API_BASE}/api/v1/jobs?page=1&page_size=25`);
 
         const data = await res.json();
         const items = data.items || [];
@@ -344,10 +337,10 @@ async function fetchProcessedJobs() {
             return `
                 <tr>
                     <td>#${j.id}</td>
-                    <td><strong>${escapeHTML(j.job_title || j.title || 'Software Role')}</strong></td>
-                    <td>${escapeHTML(skills || 'Standard')}</td>
-                    <td>${escapeHTML(j.seniority || 'Pleno')}</td>
-                    <td><span style="font-family: var(--font-mono); font-size: 10px; color: var(--accent);">384-dim vector</span></td>
+                    <td><strong>${escapeHTML(j.job_title || j.title || '—')}</strong></td>
+                    <td>${escapeHTML(skills || '—')}</td>
+                    <td>${escapeHTML(j.seniority || '—')}</td>
+                    <td><span style="font-family: var(--font-mono); font-size: 10px; color: var(--accent);">${j.embedding_model ? escapeHTML(j.embedding_model) : 'Unavailable'}</span></td>
                 </tr>
             `;
         }).join('');
@@ -362,8 +355,7 @@ async function fetchRawJobs() {
     if (!tbody) return;
 
     try {
-        const res = await apiFetch(`${API_BASE}/job-posts?page=1&page_size=25`);
-        if (!res.ok) return;
+        const res = await adminFetch(`${API_BASE}/job-posts?page=1&page_size=25`);
 
         const data = await res.json();
         const items = data.items || [];
@@ -374,12 +366,12 @@ async function fetchRawJobs() {
         }
 
         tbody.innerHTML = items.map(j => {
-            const company = j.career_page_name || j.company_name || j.company || 'Enterprise';
+            const company = j.career_page_name || j.company_name || j.company || '—';
             return `
                 <tr>
                     <td>#${j.id}</td>
-                    <td><strong>${escapeHTML(j.title || j.name || 'Position')}</strong></td>
-                    <td>${escapeHTML(j.source || 'Scraper')}</td>
+                    <td><strong>${escapeHTML(j.title || j.name || '—')}</strong></td>
+                    <td>${escapeHTML(j.source || '—')}</td>
                     <td>${escapeHTML(company)}</td>
                     <td>${j.published_date ? String(j.published_date).slice(0, 10) : '—'}</td>
                 </tr>
@@ -397,13 +389,12 @@ async function fetchLogs() {
 
     try {
         const res = await adminFetch(`${API_BASE}/api/v1/errors?page=1&page_size=30`);
-        if (!res.ok) return;
 
         const data = await res.json();
         const items = data.items || [];
 
         if (!items.length) {
-            container.innerText = `[${new Date().toISOString()}] No error events recorded. All background threads operating cleanly.`;
+            container.innerText = 'No error events recorded.';
             return;
         }
 
@@ -416,7 +407,7 @@ async function fetchLogs() {
         `).join('');
 
     } catch {
-        container.innerText = `[${new Date().toISOString()}] System operational. Logs endpoint initialized.`;
+        container.innerText = 'Logs unavailable. Retry after checking service readiness.';
     }
 }
 

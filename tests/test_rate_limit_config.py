@@ -8,6 +8,7 @@ def production_settings(**overrides) -> Settings:
     base = {
         "ENVIRONMENT": "production",
         "DEBUG": False,
+        "DATABASE_URL": "postgresql://skillpulse:secret@db.internal:5432/skillpulse",
         "ADMIN_AUTH_ENABLED": True,
         "ADMIN_API_KEY": "a" * 32,
         "RATE_LIMIT_ENABLED": True,
@@ -15,6 +16,9 @@ def production_settings(**overrides) -> Settings:
         "RATE_LIMIT_KEY_SALT": "secure-random-salt-for-testing-must-be-32-chars",
         "TRUSTED_PROXY_CIDRS": "[]",
         "TRUST_CLOUDFLARE_CONNECTING_IP": False,
+        "CORS_ORIGINS": '["https://jobs.example.com"]',
+        "CF_ACCOUNT_ID": "test-account",
+        "CF_API_TOKEN": "test-token-with-enough-entropy",
         "RATE_LIMIT_SEARCH_RPM": 60,
         "RATE_LIMIT_MATCH_RPM": 20,
         "RATE_LIMIT_EXPLAIN_RPM": 5,

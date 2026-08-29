@@ -73,7 +73,9 @@ class CandidateMatchResponse(BaseModel):
     extracted_skills: Dict[str, List[str]]
     candidate_summary: Optional[Dict[str, Any]] = Field(default=None, description="Granular area strength and market fit summary")
     target_region: Optional[str] = None
+    total_eligible: int
     total_evaluated: int
+    total_qualified: int
     total_matches: int
     matches: List[JobMatchItem]
 
@@ -96,5 +98,4 @@ class SkillGapExplanationResponse(BaseModel):
     missing_hard_skills: List[str] = []
     recommended_upskilling: List[str] = []
     explanation: str = Field(..., description="Actionable narrative explanation of the fit score and specific skill gaps")
-
 

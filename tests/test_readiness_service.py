@@ -1,4 +1,5 @@
 import pytest
+import time
 from unittest.mock import MagicMock, Mock, patch
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy import create_engine, text
@@ -88,4 +89,19 @@ def test_readiness_stale_revision(monkeypatch):
 
 def test_get_expected_head_loads_from_migrations_directory():
     head = readiness.get_expected_head()
-    assert head == "0011_runtime_schema_authority"
+    assert head == "0012_postgres_indexed_retrieval"
+
+
+def test_readiness_total_deadline_includes_connection_establishment(monkeypatch):
+    class SlowEngine:
+        def connect(self):
+            time.sleep(0.2)
+            raise AssertionError("connection completed after the deadline")
+
+    monkeypatch.setattr(readiness, "get_engine", lambda: SlowEngine())
+    started = time.monotonic()
+    result = readiness.check_database_readiness(timeout_seconds=0.03)
+    elapsed = time.monotonic() - started
+
+    assert result.failure_category == "database_readiness_timeout"
+    assert elapsed < 0.12

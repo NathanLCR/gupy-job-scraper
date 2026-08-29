@@ -16,12 +16,12 @@ class ClientIdentity:
 
 
 def normalize_ip(raw: Optional[str]) -> Optional[str]:
-    """Parse, strip zone IDs, convert IPv4-mapped IPv6, and normalize IP string."""
+    """Parse a header-safe IP, rejecting zone IDs and normalizing mapped IPv4."""
     if not raw or not isinstance(raw, str):
         return None
     cleaned = raw.strip()
     if "%" in cleaned:
-        cleaned = cleaned.split("%", 1)[0]
+        return None
     try:
         addr = ipaddress.ip_address(cleaned)
     except ValueError:

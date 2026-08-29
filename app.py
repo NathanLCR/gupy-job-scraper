@@ -12,9 +12,11 @@ from fastapi.staticfiles import StaticFiles
 from api.v1.auth import audit_operator_event, require_admin_auth
 from api.v1.router import api_v1_router
 from config import settings
+from database import SessionLocal
 from schemas import LivenessResponse, ReadinessResponse
-from services.readiness_service import check_database_readiness
-from services.csv_service import export_job_posts_csv, export_jobs_csv
+from services.postgres_retrieval_service import evaluate_retrieval_activation
+from services.readiness_service import check_database_readiness, check_redis_readiness
+from services.csv_service import export_job_posts_csv
 from services.error_service import get_errors
 from services.extractor_service import (
     get_extractor_status,
@@ -30,7 +32,6 @@ from services.features_service_hm import (
     get_top_locations,
     get_top_technologies,
 )
-from services.job_service_hm import get_job, get_jobs
 from services.jobs_post_service_hm import get_job_post, get_jobs_posts
 from services.scraper_service_hm import get_scrape_status, start_scrape_thread
 from services.search_terms_service_hm import (
@@ -44,13 +45,22 @@ from services.stats_service import get_stats
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Enforce fail-closed security configuration at startup
-    settings.validate_security_config()
+    settings.validate_runtime_config()
+    settings.validate_runtime_dependencies()
 
     # Fail-fast database readiness check
     result = check_database_readiness()
     if settings.ENVIRONMENT.lower() == "production" and not result.ready:
         raise RuntimeError(f"Startup readiness failed: {result.failure_category}")
+
+    if (
+        settings.ENVIRONMENT.lower() == "production"
+        and settings.POSTGRES_INDEXED_RETRIEVAL_ENABLED
+    ):
+        with SessionLocal() as db:
+            activation = evaluate_retrieval_activation(db)
+        if not activation.can_activate:
+            raise RuntimeError("Indexed retrieval activation failed")
 
     app.state.startup_readiness = result
     yield
@@ -69,21 +79,37 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+api_error_logger = logging.getLogger("skillpulse.api_errors")
+
+
+@app.exception_handler(Exception)
+async def unexpected_api_error(request: Request, exc: Exception) -> JSONResponse:
+    """Return a stable, cache-resistant error without exposing exception details."""
+    request_id = getattr(request.state, "request_id", None) or uuid.uuid4().hex
+    request.state.request_id = request_id
+    api_error_logger.error(
+        "unexpected_api_failure",
+        extra={
+            "event": "unexpected_api_failure",
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+        },
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error.", "request_id": request_id},
+        headers={"Cache-Control": "no-store", "X-Request-ID": request_id},
+    )
+
 # CORS Middleware Configuration
 def _get_cors_origins():
-    import json
-    raw = settings.CORS_ORIGINS
-    if isinstance(raw, list):
-        return raw
     try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return parsed
-    except Exception:
-        pass
-    if isinstance(raw, str):
-        return [o.strip() for o in raw.split(",") if o.strip()]
-    return ["http://localhost:8000", "http://127.0.0.1:8000"]
+        return list(settings.get_cors_origins())
+    except RuntimeError:
+        if settings.ENVIRONMENT.lower() == "production":
+            raise
+        return ["http://localhost:8000", "http://127.0.0.1:8000"]
 
 
 class _ScopedCORSMiddleware:
@@ -379,12 +405,17 @@ def operator_console_assets(filename: str):
 
 def _readiness_response() -> JSONResponse:
     result = check_database_readiness()
+    redis_state = check_redis_readiness()
     status_code = 200 if result.ready else 503
     payload = {
         "status": "ready" if result.ready else "not_ready",
         "database": result.database,
         "schema": result.schema_state,
         "version": settings.VERSION,
+        "dependencies": {
+            "database": result.database,
+            "redis": redis_state.status,
+        },
     }
     return JSONResponse(
         status_code=status_code,
@@ -518,45 +549,6 @@ def legacy_get_job_post(id: int):
     try:
         post = get_job_post(id)
         return post.to_dict()
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-
-
-@app.get("/jobs", tags=["Jobs"])
-def legacy_jobs(
-    search: Optional[str] = Query(None),
-    location: Optional[str] = Query(None),
-    sort: str = Query("id"),
-    order: str = Query("desc"),
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-):
-    return get_jobs(
-        search=search,
-        location=location,
-        sort=sort,
-        order=order,
-        page=page,
-        page_size=page_size,
-        paginated=True,
-    )
-
-
-@app.get("/jobs/export", tags=["Jobs"], dependencies=[Depends(require_admin_auth)])
-def legacy_export_jobs():
-    csv_data = export_jobs_csv()
-    return Response(
-        content=csv_data.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=jobs.csv"},
-    )
-
-
-@app.get("/jobs/{id}", tags=["Jobs"])
-def legacy_get_job(id: int):
-    try:
-        job = get_job(id)
-        return job.to_dict()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 

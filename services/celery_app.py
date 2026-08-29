@@ -15,6 +15,13 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_time_limit=3600,  # 1 hour max for big scraping batches
+    beat_schedule={
+        "bounded-job-reembedding": {
+            "task": "tasks.backfill_job_embeddings",
+            "schedule": settings.EMBEDDING_REEMBED_INTERVAL_SECONDS,
+            "kwargs": {"batch_size": 100, "max_batches": 1},
+        }
+    },
 )
 
 
@@ -46,3 +53,35 @@ def task_batch_extract(engine: str = "cascade", limit: int = None):
     fn, err_src = extractor_map.get(engine, (extract_cascade, "cascade_extractor"))
     _run_extractor(engine, fn, error_source=err_src, limit=limit)
     return {"status": "completed", "engine": engine, "limit": limit}
+
+
+@celery_app.task(name="tasks.backfill_job_embeddings")
+def task_backfill_job_embeddings(batch_size: int = 100, max_batches: int = 1):
+    from database import SessionLocal
+    from scripts.backfill_job_embeddings import backfill_job_embeddings
+
+    with SessionLocal() as db:
+        result = backfill_job_embeddings(
+            db, batch_size=batch_size, max_batches=max_batches
+        )
+    return {
+        "scanned": result.scanned,
+        "updated": result.updated,
+        "last_id": result.last_id,
+    }
+
+
+@celery_app.task(name="tasks.backfill_search_documents")
+def task_backfill_search_documents(batch_size: int = 500, max_batches: int = 1):
+    from database import SessionLocal
+    from scripts.backfill_search_documents import backfill_search_documents
+
+    with SessionLocal() as db:
+        result = backfill_search_documents(
+            db, batch_size=batch_size, max_batches=max_batches
+        )
+    return {
+        "scanned": result.scanned,
+        "updated": result.updated,
+        "last_id": result.last_id,
+    }
